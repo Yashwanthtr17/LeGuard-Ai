@@ -1,10 +1,19 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Button } from "./Button";
 
-export function Dropzone() {
+interface DropzoneProps {
+  onFileSelect?: (file: File) => void;
+}
+
+export function Dropzone({ onFileSelect }: DropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (file: File) => {
+    onFileSelect?.(file);
+  };
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -20,7 +29,13 @@ export function Dropzone() {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    // Mock upload logic
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
   };
 
   return (
@@ -47,9 +62,16 @@ export function Dropzone() {
             <p className="text-sm text-slate-500 mt-1">Drag and drop your PDF, DOCX, or TXT file here</p>
           </div>
           <div className="pt-4 flex flex-col sm:flex-row items-center gap-4">
-            <Button variant="primary">Browse Files</Button>
+            <Button variant="primary" onClick={() => inputRef.current?.click()}>Browse Files</Button>
             <span className="text-sm text-slate-400">or paste text directly</span>
           </div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,.docx,.txt"
+            className="hidden"
+            onChange={handleChange}
+          />
         </div>
       </div>
     </div>

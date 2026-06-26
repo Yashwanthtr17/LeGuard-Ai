@@ -8,6 +8,7 @@ export default function ScanPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [activeLayer, setActiveLayer] = useState("Initializing...");
+  const [fileName, setFileName] = useState<string | null>(null);
   const router = useRouter();
 
   // Simulate scanning process
@@ -17,7 +18,7 @@ export default function ScanPage() {
         setProgress((prev) => {
           if (prev >= 100) {
             clearInterval(interval);
-            setTimeout(() => router.push("/scan/123"), 500); // Redirect to results
+            setTimeout(() => router.push("/scan/123"), 500);
             return 100;
           }
           
@@ -26,14 +27,15 @@ export default function ScanPage() {
           else if (prev < 90) setActiveLayer("Semantic Layer: Analyzing intent...");
           else setActiveLayer("Finalizing editorial report...");
           
-          return prev + 2; // Increment progress
+          return prev + 2;
         });
       }, 100);
       return () => clearInterval(interval);
     }
   }, [isScanning, router]);
 
-  const handleSimulateUpload = () => {
+  const handleFileSelect = (file: File) => {
+    setFileName(file.name);
     setIsScanning(true);
   };
 
@@ -46,13 +48,13 @@ export default function ScanPage() {
         </p>
 
         {!isScanning ? (
-          <div className="w-full" onClick={handleSimulateUpload}>
-            {/* Click to simulate upload for demo purposes */}
-            <Dropzone />
+          <div className="w-full">
+            <Dropzone onFileSelect={handleFileSelect} />
           </div>
         ) : (
           <div className="w-full max-w-2xl bg-white p-12 rounded-3xl shadow-xl border border-slate-200">
-            <h2 className="text-2xl font-bold text-slate-900 mb-8 text-center">Curating your document...</h2>
+            <h2 className="text-2xl font-bold text-slate-900 mb-2 text-center">Curating your document...</h2>
+            {fileName && <p className="text-sm text-slate-500 text-center mb-6">{fileName}</p>}
             
             <div className="space-y-8">
               {/* Progress Bar */}
