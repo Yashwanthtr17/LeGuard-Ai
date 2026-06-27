@@ -1,30 +1,27 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 
-export function AuthGuard({ children, redirectTo = "/login" }: { children: ReactNode; redirectTo?: string }) {
+export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+
+  const publicPaths = ["/login", "/register", "/reset-password", "/", "/pricing", "/privacy", "/terms", "/disclaimers"];
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace(`${redirectTo}?redirect=${encodeURIComponent(window.location.pathname)}`);
+    if (isLoading) return;
+
+    if (!isAuthenticated && !publicPaths.includes(pathname)) {
+      router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
-  }, [isAuthenticated, isLoading, redirectTo, router]);
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center min-h-[calc(100vh-5rem)]">
-        <div className="text-center">
-          <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mx-auto" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) return null;
+    if (isAuthenticated && (pathname === "/login" || pathname === "/register")) {
+      router.replace("/dashboard");
+    }
+  }, [isAuthenticated, isLoading, pathname, router]);
 
   return <>{children}</>;
 }

@@ -1,38 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LeGuard-AI
+
+AI-powered legal document risk analyser. Upload contracts, NDAs, policies, and get a plain-English risk analysis in seconds.
+
+## Tech Stack
+
+- **Framework:** Next.js 16 (App Router)
+- **Language:** TypeScript (strict mode)
+- **Auth:** Supabase Auth (with httpOnly session management)
+- **AI:** Google Gemini or DeepSeek via OpenRouter
+- **Database:** Supabase + SQLite (reports)
+- **State:** Zustand
+- **Styling:** Tailwind CSS v4
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 20+
+- A Supabase project (free tier works)
+- An AI API key (Gemini or OpenRouter)
+
+### Environment Setup
+
+Copy `.env.example` to `.env.local` and fill in all values:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Install & Run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```
+src/
+├── app/              # Next.js App Router pages & API routes
+│   ├── analyse/      # Document upload & analysis flow
+│   ├── api/          # API routes (auth, scan, reports, dashboard)
+│   ├── dashboard/    # Main dashboard
+│   ├── report/       # Individual report view
+│   └── reports/      # Saved reports list
+├── components/       # React components
+│   ├── analyzer/     # UploadZone, ConfigurationForm, AnalysisProgress
+│   ├── layout/       # Header, Footer, AuthGuard, ErrorBoundary
+│   ├── report/       # Report-specific components
+│   └── ui/           # Reusable UI primitives
+├── hooks/            # Custom React hooks
+│   ├── useAnalysis.ts
+│   └── useReports.ts
+├── lib/              # Utilities & services
+│   ├── ai.ts         # AI analysis client (with retry logic)
+│   ├── auth.ts       # Auth utilities
+│   ├── auth-context.tsx
+│   ├── db.ts         # SQLite database
+│   ├── formatters.ts # Date, file size, risk score formatters
+│   ├── rate-limiter.ts
+│   ├── schemas.ts    # Zod validation schemas
+│   ├── supabase.ts   # Supabase client & helpers
+│   └── validators.ts # File & text validators
+├── store/            # Zustand state stores
+│   └── analysisStore.ts
+└── types/            # Shared TypeScript types
+    └── index.ts
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API Routes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Method | Route                | Description              |
+|--------|----------------------|--------------------------|
+| POST   | /api/auth/login      | Sign in                  |
+| POST   | /api/auth/register   | Create account           |
+| POST   | /api/auth/logout     | Sign out                 |
+| POST   | /api/auth/forgot-password | Send reset email    |
+| GET    | /api/auth/me         | Get current user         |
+| PUT    | /api/auth/me         | Update profile/password  |
+| POST   | /api/scan            | Upload & analyse doc     |
+| GET    | /api/scan            | List user's reports      |
+| GET    | /api/scan/[id]       | Get single report        |
+| DELETE | /api/scan/[id]       | Delete report            |
+| GET    | /api/dashboard       | Dashboard statistics     |
+| GET    | /api/reports         | Paginated reports list   |
+| GET    | /api/reports/[id]/pdf | Download report as PDF  |
 
-## Deploy on Vercel
+## Security
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-
+- All API routes verify Supabase JWT tokens server-side
+- Rate limiting on document analysis (5 req/min per user)
+- File validation on both client and server (MIME type, size, extension)
+- Security headers set via next.config.ts (X-Frame-Options, CSP, etc.)
+- AI API keys are never exposed to the client
+- Zod validation on all request bodies

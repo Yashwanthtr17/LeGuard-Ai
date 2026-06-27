@@ -2,65 +2,57 @@ import Link from "next/link";
 
 export function Footer() {
   return (
-    <footer className="bg-white border-t border-slate-200/60 mt-auto relative">
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/[0.015] to-transparent pointer-events-none" />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 relative">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-8 sm:gap-6">
-          <div className="sm:col-span-2 md:col-span-2">
-            <Link href="/" className="text-xl font-bold tracking-tight">
-              <span className="text-primary">LeGuard</span>{" "}
-              <span className="text-slate-800">AI</span>
+    <footer className="bg-slate-900 text-white border-t border-slate-800">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 sm:gap-12">
+          <div className="sm:col-span-2 lg:col-span-1">
+            <Link href="/" className="inline-flex items-center gap-1.5 mb-4">
+              <svg className="w-6 h-6 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span className="text-xl font-bold">
+                LeGuard<span className="text-accent">-AI</span>
+              </span>
             </Link>
-            <p className="mt-3 text-sm sm:text-base text-slate-500 max-w-sm leading-relaxed">
-              The Digital Curator. A scholarly, premium, and authoritative editorial experience for legal document review.
+            <p className="text-sm text-slate-400 leading-relaxed max-w-xs">
+              Your AI-powered legal guardian. Understand every clause, every risk.
             </p>
           </div>
 
           <div>
-            <h3 className="text-xs sm:text-sm font-semibold text-slate-900 tracking-wider uppercase">Legal</h3>
-            <ul className="mt-4 space-y-2 sm:space-y-3">
-              <li>
-                <Link href="/privacy" className="text-sm sm:text-base text-slate-500 hover:text-primary transition-all duration-200 block py-1 hover:translate-x-0.5">
-                  Privacy Policy
-                </Link>
-              </li>
-              <li>
-                <Link href="/terms" className="text-sm sm:text-base text-slate-500 hover:text-primary transition-all duration-200 block py-1 hover:translate-x-0.5">
-                  Terms of Service
-                </Link>
-              </li>
-              <li>
-                <Link href="/disclaimers" className="text-sm sm:text-base text-slate-500 hover:text-primary transition-all duration-200 block py-1 hover:translate-x-0.5">
-                  Legal Disclaimers
-                </Link>
-              </li>
+            <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">Product</h4>
+            <ul className="space-y-3">
+              <li><Link href="/analyse" className="text-sm text-slate-400 hover:text-accent transition-colors">New Analysis</Link></li>
+              <li><Link href="/reports" className="text-sm text-slate-400 hover:text-accent transition-colors">My Reports</Link></li>
+              <li><Link href="/pricing" className="text-sm text-slate-400 hover:text-accent transition-colors">Pricing</Link></li>
             </ul>
           </div>
 
           <div>
-            <h3 className="text-xs sm:text-sm font-semibold text-slate-900 tracking-wider uppercase">Product</h3>
-            <ul className="mt-4 space-y-2 sm:space-y-3">
-              <li>
-                <Link href="/pricing" className="text-sm sm:text-base text-slate-500 hover:text-primary transition-all duration-200 block py-1 hover:translate-x-0.5">
-                  Pricing
-                </Link>
-              </li>
-              <li>
-                <Link href="/scan" className="text-sm sm:text-base text-slate-500 hover:text-primary transition-all duration-200 block py-1 hover:translate-x-0.5">
-                  New Scan
-                </Link>
-              </li>
-              <li>
-                <Link href="/history" className="text-sm sm:text-base text-slate-500 hover:text-primary transition-all duration-200 block py-1 hover:translate-x-0.5">
-                  History
-                </Link>
-              </li>
+            <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">Legal</h4>
+            <ul className="space-y-3">
+              <li><Link href="/privacy" className="text-sm text-slate-400 hover:text-accent transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="text-sm text-slate-400 hover:text-accent transition-colors">Terms of Service</Link></li>
+              <li><Link href="/disclaimers" className="text-sm text-slate-400 hover:text-accent transition-colors">Legal Disclaimers</Link></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">Account</h4>
+            <ul className="space-y-3">
+              <li><Link href="/login" className="text-sm text-slate-400 hover:text-accent transition-colors">Sign In</Link></li>
+              <li><Link href="/register" className="text-sm text-slate-400 hover:text-accent transition-colors">Create Account</Link></li>
+              <li><Link href="/settings" className="text-sm text-slate-400 hover:text-accent transition-colors">Settings</Link></li>
             </ul>
           </div>
         </div>
-        <div className="mt-8 sm:mt-10 border-t border-slate-200/60 pt-6 sm:pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-sm sm:text-base text-slate-400">
-            &copy; {new Date().getFullYear()} LeGuard AI. All rights reserved.
+
+        <div className="border-t border-slate-800 mt-10 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <p className="text-xs text-slate-500">
+            &copy; {new Date().getFullYear()} LeGuard-AI. All rights reserved.
+          </p>
+          <p className="text-xs text-slate-600">
+            AI-generated reports are for informational purposes only and do not constitute legal advice.
           </p>
         </div>
       </div>

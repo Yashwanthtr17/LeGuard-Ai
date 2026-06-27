@@ -1,114 +1,130 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 
 interface AuthUser {
+  id: string;
   email: string;
-  name: string;
+  full_name: string;
+  default_country: string;
+  risk_sensitivity: string;
+  onboarding_complete: boolean;
 }
 
 interface AuthContextType {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<string | null>;
-  signup: (name: string, email: string, password: string) => Promise<{ error: string | null; needsConfirmation: boolean }>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<string | null>;
+  signup: (name: string, email: string, password: string, country?: string) => Promise<string | null>;
   logout: () => void;
-  resetPassword: (email: string) => Promise<string | null>;
+  updateUser: (data: Partial<AuthUser>) => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const TOKEN_KEY = "leguard_token";
+
+function getStoredToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function setStoredToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = useRef(createClient(supabaseUrl, supabaseAnonKey)).current;
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser({
-          email: session.user.email ?? "",
-          name: session.user.user_metadata?.name ?? session.user.email ?? "",
-        });
-      }
-      setIsLoading(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser({
-          email: session.user.email ?? "",
-          name: session.user.user_metadata?.name ?? session.user.email ?? "",
-        });
+  const fetchUser = useCallback(async (token: string) => {
+    try {
+      const res = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
       } else {
+        setStoredToken(null);
         setUser(null);
       }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [supabase]);
-
-  const login = useCallback(async (email: string, password: string): Promise<string | null> => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (!error) return null;
-
-    if (error.message === "Email not confirmed") {
-      return "Please confirm your email address first. Check your inbox for a confirmation link.";
+    } catch {
+      setUser(null);
+    } finally {
+      setIsLoading(false);
     }
-    if (error.message.includes("Invalid login credentials")) {
-      return "Invalid email or password. Please try again.";
+  }, []);
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (token) {
+      fetchUser(token);
+    } else {
+      setIsLoading(false);
     }
-    return error.message;
-  }, [supabase]);
+  }, [fetchUser]);
 
-  const signup = useCallback(async (name: string, email: string, password: string): Promise<{ error: string | null; needsConfirmation: boolean }> => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { name } },
-    });
-
-    if (error) {
-      if (error.message.includes("already registered") || error.message.includes("User already registered")) {
-        return { error: "This email is already registered. Please sign in instead.", needsConfirmation: false };
-      }
-      return { error: error.message, needsConfirmation: false };
+  const login = useCallback(async (email: string, password: string, rememberMe?: boolean): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, remember_me: rememberMe }),
+      });
+      const data = await res.json();
+      if (!res.ok) return data.message || "Login failed";
+      setStoredToken(data.token);
+      setUser(data.user);
+      return null;
+    } catch {
+      return "Network error. Please check your connection.";
     }
+  }, []);
 
-    if (data?.user?.identities?.length === 0) {
-      return { error: "This email is already registered. Please sign in instead.", needsConfirmation: false };
+  const signup = useCallback(async (name: string, email: string, password: string, country?: string): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: name, email, password, default_country: country }),
+      });
+      const data = await res.json();
+      if (!res.ok) return data.message || "Registration failed";
+      setStoredToken(data.token);
+      setUser(data.user);
+      return null;
+    } catch {
+      return "Network error. Please check your connection.";
     }
-
-    if (data?.user?.email_confirmed_at || data?.session) {
-      return { error: null, needsConfirmation: false };
-    }
-
-    return { error: null, needsConfirmation: true };
-  }, [supabase]);
-
-  const resetPassword = useCallback(async (email: string): Promise<string | null> => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`,
-    });
-    if (!error) return null;
-    if (error.message.includes("Email not found")) {
-      return "No account found with this email address.";
-    }
-    return error.message;
-  }, [supabase]);
+  }, []);
 
   const logout = useCallback(async () => {
-    await supabase.auth.signOut();
+    await fetch("/api/auth/logout", { method: "POST" });
+    setStoredToken(null);
     setUser(null);
-  }, [supabase]);
+  }, []);
+
+  const updateUser = useCallback((data: Partial<AuthUser>) => {
+    setUser(prev => prev ? { ...prev, ...data } : null);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const token = getStoredToken();
+    if (token) {
+      await fetchUser(token);
+    }
+  }, [fetchUser]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, logout, resetPassword }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, logout, updateUser, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

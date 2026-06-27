@@ -1,113 +1,133 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import db from '@/lib/db';
+import { generateId } from '@/lib/auth';
+import { getUserFromRequest } from '@/lib/supabase';
 import { parseDocument } from '@/lib/document-parser';
 import { analyzeDocument } from '@/lib/ai';
-import { saveScan, listScans, ScanResult } from '@/lib/store';
+import { scanDocumentSchema } from '@/lib/schemas';
+import { validateFile } from '@/lib/validators';
+import { checkRateLimit } from '@/lib/rate-limiter';
 
-export async function POST(request: NextRequest) {
+const UPLOAD_DIR = join(process.cwd(), '.uploads');
+const MAX_SIZE = 10 * 1024 * 1024;
+const ALLOWED_TYPES = ['.pdf', '.docx', '.doc', '.txt'];
+
+export async function POST(req: NextRequest) {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            'Google API key not configured. Create a .env.local file with GOOGLE_API_KEY=your_key_here',
-        },
-        { status: 500 }
-      );
+    const user = await getUserFromRequest(req);
+    if (!user) {
+      return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const formData = await request.formData();
+    const rateLimit = checkRateLimit(`scan:${user.id}`, 5);
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: true, message: 'Too many requests. Please wait before scanning again.' }, { status: 429 });
+    }
+
+    const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const jurisdiction = (formData.get('jurisdiction') as string) || 'auto';
 
     if (!file) {
-      return NextResponse.json(
-        { error: 'No file provided' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: true, message: 'No file provided.' }, { status: 400 });
     }
 
-    const maxSize = 20 * 1024 * 1024;
-    if (file.size > maxSize) {
-      return NextResponse.json(
-        { error: 'File too large. Maximum size is 20MB.' },
-        { status: 400 }
-      );
+    const fileValidation = validateFile(file);
+    if (!fileValidation.valid) {
+      return NextResponse.json({ error: true, message: fileValidation.error }, { status: 400 });
     }
 
-    const allowedTypes = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain',
-    ];
+    const metadata = scanDocumentSchema.safeParse({
+      jurisdiction: formData.get('jurisdiction') as string,
+      document_type: formData.get('document_type') as string,
+      focus_areas: formData.get('focus_areas') as string,
+    });
 
-    if (!allowedTypes.includes(file.type) &&
-        !file.name.endsWith('.pdf') &&
-        !file.name.endsWith('.docx') &&
-        !file.name.endsWith('.txt')) {
-      return NextResponse.json(
-        { error: 'Unsupported file type. Please upload PDF, DOCX, or TXT files.' },
-        { status: 400 }
-      );
+    if (!metadata.success) {
+      return NextResponse.json({ error: true, message: 'Invalid form data.' }, { status: 400 });
+    }
+
+    const { jurisdiction, document_type: docType, focus_areas: focusAreas } = metadata.data;
+
+    if (!existsSync(UPLOAD_DIR)) {
+      mkdirSync(UPLOAD_DIR, { recursive: true });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-
     const parsed = await parseDocument(buffer, file.name);
 
-    if (!parsed.text || parsed.text.trim().length < 50) {
-      return NextResponse.json(
-        { error: 'Could not extract text from the document. The file may be empty, scanned (image-based), or corrupted.' },
-        { status: 400 }
-      );
+    if (!parsed.text || parsed.text.trim().length < 10) {
+      return NextResponse.json({ error: true, message: 'The document appears to be empty or unreadable.' }, { status: 400 });
     }
 
-    const analysis = await analyzeDocument(
-      parsed.text,
+    const reportId = generateId();
+    const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+    const fileName = `${reportId}${ext}`;
+    const filePath = join(UPLOAD_DIR, fileName);
+    await writeFile(filePath, buffer);
+
+    const analysis = await analyzeDocument(parsed.text, jurisdiction, focusAreas);
+
+    const fullAnalysis = JSON.stringify(analysis);
+    const riskLevel = analysis.overall_score >= 7 ? 'HIGH' : analysis.overall_score >= 4 ? 'MEDIUM' : analysis.overall_score >= 1 ? 'LOW' : 'NONE';
+
+    db.prepare(`
+      INSERT INTO reports (id, user_id, document_name, document_type, country, overall_score, risk_level, verdict, executive_summary, full_analysis, file_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      reportId,
+      user.id,
+      file.name,
+      docType,
       jurisdiction,
-      apiKey
+      analysis.overall_score,
+      riskLevel,
+      analysis.verdict || '',
+      analysis.executive_summary || '',
+      fullAnalysis,
+      filePath
     );
 
-    const id = crypto.randomUUID();
-
-    const result: ScanResult = {
-      ...analysis,
-      id,
-      fileName: parsed.fileName,
-      fileType: parsed.fileType,
-      documentText: parsed.text,
-    };
-
-    saveScan(id, result);
-
-    return NextResponse.json({ id });
-  } catch (error) {
-    console.error('Scan error:', error);
-    const message =
-      error instanceof Error ? error.message : 'An unexpected error occurred';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ id: reportId });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Analysis failed. Please try again.';
+    console.error('[scan] Error:', message);
+    return NextResponse.json({ error: true, message }, { status: 500 });
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const scans = listScans();
-    const summaries = scans.map((s) => ({
-      id: s.id,
-      fileName: s.fileName,
-      fileType: s.fileType,
-      jurisdiction: s.jurisdiction,
-      detectedCountry: s.detectedCountry,
-      riskScore: s.riskScore,
-      riskLevel: s.riskLevel,
-      createdAt: s.createdAt,
-    }));
-    return NextResponse.json(summaries);
-  } catch (error) {
-    console.error('List scans error:', error);
-    return NextResponse.json(
-      { error: 'Failed to list scans' },
-      { status: 500 }
-    );
+    const user = await getUserFromRequest(req);
+    if (!user) {
+      return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
+    }
+
+    const reports = db.prepare(
+      'SELECT id, document_name, document_type, country, overall_score, risk_level, created_at FROM reports WHERE user_id = ? ORDER BY created_at DESC'
+    ).all(user.id) as Array<{
+      id: string;
+      document_name: string;
+      document_type: string;
+      country: string;
+      overall_score: number;
+      risk_level: string;
+      created_at: string;
+    }>;
+
+    return NextResponse.json(reports.map((r) => ({
+      id: r.id,
+      fileName: r.document_name,
+      documentType: r.document_type,
+      jurisdiction: r.country,
+      riskScore: r.overall_score,
+      riskLevel: r.risk_level,
+      createdAt: r.created_at,
+    })));
+  } catch (err: unknown) {
+    console.error('[scan:get] Error:', err instanceof Error ? err.message : 'Unknown');
+    return NextResponse.json({ error: true, message: 'Failed to fetch reports.' }, { status: 500 });
   }
 }
