@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin, getSupabaseAuth } from '@/lib/supabase';
+import { updateProfileSchema } from '@/lib/schemas';
+import { getProfile, upsertProfile, logActivity } from '@/lib/db';
 
 function getToken(req: NextRequest): string | null {
   const auth = req.headers.get('authorization');
   if (!auth?.startsWith('Bearer ')) return null;
   return auth.slice(7);
+}
+
+async function authenticate(token: string) {
+  const { data: { user }, error } = await getSupabaseAdmin().auth.getUser(token);
+  if (error || !user) return null;
+  return user;
 }
 
 export async function GET(req: NextRequest) {
@@ -13,20 +21,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
 
-  const { data: { user }, error } = await getSupabaseAdmin().auth.getUser(token);
-  if (error || !user) {
+  const user = await authenticate(token);
+  if (!user) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
 
   const meta = user.user_metadata || {};
+  const profile = getProfile(user.id);
 
   return NextResponse.json({
     id: user.id,
-    full_name: meta.full_name || '',
     email: user.email,
-    default_country: meta.default_country || 'United States',
-    risk_sensitivity: meta.risk_sensitivity || 'standard',
-    onboarding_complete: !!meta.onboarding_complete,
+    full_name: profile?.full_name || meta.full_name || '',
+    avatar_url: meta.avatar_url || '',
+    default_country: profile?.default_country || meta.default_country || 'United States',
+    risk_sensitivity: profile?.risk_sensitivity || meta.risk_sensitivity || 'standard',
+    theme: profile?.theme || meta.theme || 'system',
+    onboarding_complete: !!(profile?.onboarding_complete ?? meta.onboarding_complete),
+    created_at: user.created_at,
   });
 }
 
@@ -36,20 +48,45 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
 
-  const { data: { user }, error: userError } = await getSupabaseAdmin().auth.getUser(token);
-  if (userError || !user) {
+  const user = await authenticate(token);
+  if (!user) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
 
   try {
     const body = await req.json();
+    const parsed = updateProfileSchema.safeParse(body);
+
+    if (!parsed.success) {
+      const message = parsed.error.issues[0]?.message || 'Invalid input.';
+      return NextResponse.json({ error: true, message }, { status: 400 });
+    }
+
+    const { current_password, new_password, ...profileFields } = parsed.data;
     const currentMeta = user.user_metadata || {};
     const metadataUpdates: Record<string, unknown> = {};
+    const profileUpdates: Record<string, unknown> = {};
 
-    if (body.full_name) metadataUpdates.full_name = body.full_name;
-    if (body.default_country) metadataUpdates.default_country = body.default_country;
-    if (body.risk_sensitivity) metadataUpdates.risk_sensitivity = body.risk_sensitivity;
-    if (body.onboarding_complete !== undefined) metadataUpdates.onboarding_complete = body.onboarding_complete;
+    if (profileFields.full_name) {
+      metadataUpdates.full_name = profileFields.full_name;
+      profileUpdates.full_name = profileFields.full_name;
+    }
+    if (profileFields.default_country) {
+      metadataUpdates.default_country = profileFields.default_country;
+      profileUpdates.default_country = profileFields.default_country;
+    }
+    if (profileFields.risk_sensitivity) {
+      metadataUpdates.risk_sensitivity = profileFields.risk_sensitivity;
+      profileUpdates.risk_sensitivity = profileFields.risk_sensitivity;
+    }
+    if (profileFields.theme) {
+      metadataUpdates.theme = profileFields.theme;
+      profileUpdates.theme = profileFields.theme;
+    }
+    if (profileFields.onboarding_complete !== undefined) {
+      metadataUpdates.onboarding_complete = profileFields.onboarding_complete;
+      profileUpdates.onboarding_complete = profileFields.onboarding_complete ? 1 : 0;
+    }
 
     if (Object.keys(metadataUpdates).length > 0) {
       const { error: updateError } = await getSupabaseAdmin().auth.admin.updateUserById(user.id, {
@@ -60,8 +97,12 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    if (body.current_password && body.new_password) {
-      if (body.new_password.length < 8) {
+    if (Object.keys(profileUpdates).length > 0) {
+      upsertProfile(user.id, profileUpdates);
+    }
+
+    if (current_password && new_password) {
+      if (new_password.length < 8) {
         return NextResponse.json({ error: true, message: 'New password must be at least 8 characters.' }, { status: 400 });
       }
       if (!user.email) {
@@ -69,32 +110,38 @@ export async function PUT(req: NextRequest) {
       }
       const { error: signInError } = await getSupabaseAuth().auth.signInWithPassword({
         email: user.email,
-        password: body.current_password,
+        password: current_password,
       });
       if (signInError) {
         return NextResponse.json({ error: true, message: 'Current password is incorrect.' }, { status: 400 });
       }
       const { error: pwdError } = await getSupabaseAdmin().auth.admin.updateUserById(user.id, {
-        password: body.new_password,
+        password: new_password,
       });
       if (pwdError) {
         return NextResponse.json({ error: true, message: pwdError.message }, { status: 400 });
       }
     }
 
+    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
+    logActivity(user.id, 'profile_update', 'User updated profile', ip);
+
     const { data: { user: updatedUser } } = await getSupabaseAdmin().auth.getUser(token);
     const meta = updatedUser?.user_metadata || {};
+    const profile = getProfile(user.id);
 
     return NextResponse.json({
       id: updatedUser!.id,
-      full_name: meta.full_name || '',
       email: updatedUser!.email,
-      default_country: meta.default_country || 'United States',
-      risk_sensitivity: meta.risk_sensitivity || 'standard',
-      onboarding_complete: !!meta.onboarding_complete,
+      full_name: profile?.full_name || meta.full_name || '',
+      avatar_url: meta.avatar_url || '',
+      default_country: profile?.default_country || meta.default_country || 'United States',
+      risk_sensitivity: profile?.risk_sensitivity || meta.risk_sensitivity || 'standard',
+      theme: profile?.theme || meta.theme || 'system',
+      onboarding_complete: !!(profile?.onboarding_complete ?? meta.onboarding_complete),
     });
   } catch (err) {
-    console.error('Update profile error:', err);
+    console.error('[me:put] Error:', err);
     return NextResponse.json({ error: true, message: 'Update failed.' }, { status: 500 });
   }
 }

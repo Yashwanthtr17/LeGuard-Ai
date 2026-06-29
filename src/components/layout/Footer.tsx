@@ -30,10 +30,17 @@ export function Footer() {
 
           <div>
             <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">Legal</h4>
-            <ul className="space-y-3">
+            <ul className="space-y-2">
               <li><Link href="/privacy" className="text-sm text-slate-400 hover:text-accent transition-colors">Privacy Policy</Link></li>
               <li><Link href="/terms" className="text-sm text-slate-400 hover:text-accent transition-colors">Terms of Service</Link></li>
               <li><Link href="/disclaimers" className="text-sm text-slate-400 hover:text-accent transition-colors">Legal Disclaimers</Link></li>
+              <li><Link href="/cookies" className="text-sm text-slate-400 hover:text-accent transition-colors">Cookie Policy</Link></li>
+              <li><Link href="/refund" className="text-sm text-slate-400 hover:text-accent transition-colors">Refund Policy</Link></li>
+              <li><Link href="/acceptable-use" className="text-sm text-slate-400 hover:text-accent transition-colors">Acceptable Use</Link></li>
+              <li><Link href="/data-retention" className="text-sm text-slate-400 hover:text-accent transition-colors">Data Retention</Link></li>
+              <li><Link href="/security" className="text-sm text-slate-400 hover:text-accent transition-colors">Security</Link></li>
+              <li><Link href="/gdpr" className="text-sm text-slate-400 hover:text-accent transition-colors">GDPR</Link></li>
+              <li><Link href="/ccpa" className="text-sm text-slate-400 hover:text-accent transition-colors">CCPA</Link></li>
             </ul>
           </div>
 

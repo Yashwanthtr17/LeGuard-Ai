@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   let query = 'SELECT id, document_name, document_type, country, overall_score, risk_level, created_at FROM reports WHERE user_id = ?';
-  const params: any[] = [user.id];
+  const params: (string | number)[] = [user.id];
 
   if (search) {
     query += ' AND document_name LIKE ?';
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     params.push(riskLevel);
   }
 
-  const countResult = db.prepare(query.replace('SELECT id, document_name, document_type, country, overall_score, risk_level, created_at', 'SELECT COUNT(*) as total')).get(...params) as any;
+  const countResult = db.prepare(query.replace('SELECT id, document_name, document_type, country, overall_score, risk_level, created_at', 'SELECT COUNT(*) as total')).get(...params) as { total: number } | undefined;
   const total = countResult?.total || 0;
 
   switch (sort) {
@@ -46,10 +46,10 @@ export async function GET(req: NextRequest) {
   query += ' LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
-  const reports = db.prepare(query).all(...params);
+  const rows = db.prepare(query).all(...params) as Record<string, unknown>[];
 
   return NextResponse.json({
-    reports: reports.map((r: any) => ({
+    reports: rows.map((r) => ({
       id: r.id,
       document_name: r.document_name,
       document_type: r.document_type,

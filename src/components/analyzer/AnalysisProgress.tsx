@@ -5,14 +5,6 @@ interface AnalysisProgressProps {
   progressLabel: string;
 }
 
-const SCAN_STAGES = [
-  "Extracting document text…",
-  "Identifying legal clauses…",
-  "Cross-referencing legal framework…",
-  "Calculating risk score…",
-  "Generating your report…",
-];
-
 export function AnalysisProgress({ fileName, progressLabel }: AnalysisProgressProps) {
   return (
     <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 sm:p-12 text-center animate-scale-in">

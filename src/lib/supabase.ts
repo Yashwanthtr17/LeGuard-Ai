@@ -1,12 +1,18 @@
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient as createBrowser } from '@supabase/ssr';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
+import type { Database } from '@/types/supabase';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export function createSupabaseBrowserClient() {
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+export function createBrowserClient(): ReturnType<typeof createBrowser<Database>> {
+  return createBrowser<Database>(supabaseUrl, supabaseAnonKey);
+}
+
+/** @deprecated Use createBrowserClient instead */
+export function createSupabaseBrowserClient(): ReturnType<typeof createBrowser<Database>> {
+  return createBrowserClient();
 }
 
 let _supabaseAdmin: SupabaseClient | null = null;
@@ -35,6 +41,8 @@ export interface AuthUser {
   id: string;
   email: string;
   full_name: string;
+  avatar_url?: string;
+  theme?: string;
 }
 
 export async function getUserFromRequest(req: NextRequest): Promise<AuthUser | null> {
@@ -49,6 +57,8 @@ export async function getUserFromRequest(req: NextRequest): Promise<AuthUser | n
       id: user.id,
       email: user.email || '',
       full_name: meta.full_name || '',
+      avatar_url: meta.avatar_url || '',
+      theme: meta.theme || 'light',
     };
   } catch {
     return null;

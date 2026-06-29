@@ -1,0 +1,48 @@
+const flagMap: Record<string, string> = {
+  'United States': '\u{1F1FA}\u{1F1F8}',
+  'United Kingdom': '\u{1F1EC}\u{1F1E7}',
+  India: '\u{1F1EE}\u{1F1F3}',
+  Canada: '\u{1F1E8}\u{1F1E6}',
+  Australia: '\u{1F1E6}\u{1F1FA}',
+  Germany: '\u{1F1E9}\u{1F1EA}',
+  France: '\u{1F1EB}\u{1F1F7}',
+  Brazil: '\u{1F1E7}\u{1F1F7}',
+  Singapore: '\u{1F1F8}\u{1F1EC}',
+  'United Arab Emirates': '\u{1F1E6}\u{1F1EA}',
+  Japan: '\u{1F1EF}\u{1F1F5}',
+  China: '\u{1F1E8}\u{1F1F3}',
+  'South Korea': '\u{1F1F0}\u{1F1F7}',
+  Russia: '\u{1F1F7}\u{1F1FA}',
+  'South Africa': '\u{1F1FF}\u{1F1E6}',
+  Mexico: '\u{1F1F2}\u{1F1FD}',
+  Italy: '\u{1F1EE}\u{1F1F9}',
+  Spain: '\u{1F1EA}\u{1F1F8}',
+  Netherlands: '\u{1F1F3}\u{1F1F1}',
+  Switzerland: '\u{1F1E8}\u{1F1ED}',
+  Sweden: '\u{1F1F8}\u{1F1EA}',
+  Norway: '\u{1F1F3}\u{1F1F4}',
+  Denmark: '\u{1F1E9}\u{1F1F0}',
+  Finland: '\u{1F1EB}\u{1F1EE}',
+  'New Zealand': '\u{1F1F3}\u{1F1FF}',
+  Ireland: '\u{1F1EE}\u{1F1EA}',
+  Malaysia: '\u{1F1F2}\u{1F1FE}',
+  Indonesia: '\u{1F1EE}\u{1F1E9}',
+  Thailand: '\u{1F1F9}\u{1F1ED}',
+  'Saudi Arabia': '\u{1F1F8}\u{1F1E6}',
+  Turkey: '\u{1F1F9}\u{1F1F7}',
+  Nigeria: '\u{1F1F3}\u{1F1EC}',
+  Kenya: '\u{1F1F0}\u{1F1EA}',
+  Argentina: '\u{1F1E6}\u{1F1F7}',
+  Poland: '\u{1F1F5}\u{1F1F1}',
+  Portugal: '\u{1F1F5}\u{1F1F9}',
+  Belgium: '\u{1F1E7}\u{1F1EA}',
+  Austria: '\u{1F1E6}\u{1F1F9}',
+  Greece: '\u{1F1EC}\u{1F1F7}',
+  'Hong Kong': '\u{1F1ED}\u{1F1F0}',
+};
+
+export function getCountryFlag(countryName: string): string {
+  return flagMap[countryName] || '\u{1F310}';
+}
+
+export { flagMap };

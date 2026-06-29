@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAuth } from '@/lib/supabase';
 import { loginSchema } from '@/lib/schemas';
+import { logActivity } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,10 +9,11 @@ export async function POST(req: NextRequest) {
     const parsed = loginSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json({ error: true, message: 'Email and password are required.' }, { status: 400 });
+      const message = parsed.error.issues[0]?.message || 'Invalid input.';
+      return NextResponse.json({ error: true, message }, { status: 400 });
     }
 
-    const { email, password } = parsed.data;
+    const { email, password, remember_me } = parsed.data;
 
     const { data, error } = await getSupabaseAuth().auth.signInWithPassword({
       email: email.toLowerCase(),
@@ -19,21 +21,28 @@ export async function POST(req: NextRequest) {
     });
 
     if (error) {
-      return NextResponse.json({ error: true, message: 'Invalid email or password. Please try again.' }, { status: 401 });
+      return NextResponse.json({ error: true, message: 'Invalid email or password.' }, { status: 401 });
     }
 
+    const session = data.session;
     const user = data.user;
     const meta = user?.user_metadata ?? {};
 
+    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
+    logActivity(user!.id, 'login', 'User logged in', ip);
+
     return NextResponse.json({
-      token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
+      token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_in: remember_me ? 2592000 : 604800,
       user: {
         id: user!.id,
         email: user!.email,
         full_name: meta.full_name || '',
+        avatar_url: meta.avatar_url || '',
         default_country: meta.default_country || 'United States',
         risk_sensitivity: meta.risk_sensitivity || 'standard',
+        theme: meta.theme || 'system',
         onboarding_complete: !!meta.onboarding_complete,
       },
     });

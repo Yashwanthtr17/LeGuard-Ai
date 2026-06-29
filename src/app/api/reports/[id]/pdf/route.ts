@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 import { getUserFromRequest } from '@/lib/supabase';
 
+interface ReportRow {
+  id: string;
+  document_name: string;
+  document_type: string;
+  overall_score: number;
+  risk_level: string;
+  created_at: string;
+  country: string;
+  full_analysis: string;
+  executive_summary: string;
+  verdict: string;
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getUserFromRequest(req);
   if (!user) {
@@ -9,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   const { id } = await params;
-  const report = db.prepare('SELECT * FROM reports WHERE id = ? AND user_id = ?').get(id, user.id) as any;
+  const report = db.prepare('SELECT * FROM reports WHERE id = ? AND user_id = ?').get(id, user.id) as ReportRow;
   if (!report) {
     return NextResponse.json({ error: true, message: 'Report not found.' }, { status: 404 });
   }
@@ -105,7 +118,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   doc.setFont('helvetica', 'bold');
   doc.text('Overall Risk Score', 20, y);
   y += 12;
-  const scoreColor = report.overall_score >= 7 ? '#E53E3E' : report.overall_score >= 4 ? '#D69E2E' : '#38A169';
+
   doc.setFontSize(48);
   doc.setTextColor(
     report.overall_score >= 7 ? 229 : report.overall_score >= 4 ? 214 : 56,
@@ -134,7 +147,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     for (const clause of analysis.clauses) {
       if (y > 230) addPage();
-      const cColor = clause.risk_score >= 7 ? '#E53E3E' : clause.risk_score >= 4 ? '#D69E2E' : '#38A169';
       doc.setFillColor(clause.risk_score >= 7 ? 254 : clause.risk_score >= 4 ? 255 : 240, clause.risk_score >= 7 ? 242 : clause.risk_score >= 4 ? 250 : 245, clause.risk_score >= 7 ? 242 : clause.risk_score >= 4 ? 240 : 240);
       doc.roundedRect(20, y - 2, pageWidth - 40, 5, 2, 2, 'F');
       doc.setFontSize(11);

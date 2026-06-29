@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import type { ReportSummary } from "@/types";
 
 interface UseReportsReturn {
@@ -17,33 +17,53 @@ export function useReports(): UseReportsReturn {
 
   const token = typeof window !== "undefined" ? localStorage.getItem("leguard_token") : null;
 
-  const fetchReports = useCallback(async () => {
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
+      fetch("/api/reports", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(res => {
+          if (!res.ok) throw new Error("Failed to fetch reports");
+          return res.json();
+        })
+        .then(data => {
+          if (!cancelled) setReports(data.reports || data || []);
+        })
+        .catch(err => {
+          if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load reports");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [token]);
+
+  function refresh() {
+    setLoading(true);
+    setError(null);
     if (!token) {
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/reports", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || "Failed to fetch reports");
-      }
-      const data = await res.json();
-      setReports(data.reports || data || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load reports");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+    fetch("/api/reports", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to fetch reports");
+        return res.json();
+      })
+      .then(data => setReports(data.reports || data || []))
+      .catch(err => setError(err instanceof Error ? err.message : "Failed to load reports"))
+      .finally(() => setLoading(false));
+  }
 
-  useEffect(() => {
-    fetchReports();
-  }, [fetchReports]);
-
-  return { reports, loading, error, refresh: fetchReports };
+  return { reports, loading, error, refresh };
 }

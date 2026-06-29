@@ -64,7 +64,7 @@ function persistStore(store: Map<string, ScanResult>): void {
   }
 }
 
-let store = loadStore();
+const store = loadStore();
 
 export function saveScan(id: string, result: ScanResult): void {
   store.set(id, result);

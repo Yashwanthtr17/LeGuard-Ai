@@ -1,15 +1,9 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-
-interface AuthUser {
-  id: string;
-  email: string;
-  full_name: string;
-  default_country: string;
-  risk_sensitivity: string;
-  onboarding_complete: boolean;
-}
+import { createContext, useContext, useCallback, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useUser, useLogin, useRegister, useLogout, useUpdateProfile } from "@/lib/hooks/use-auth";
+import type { AuthUser } from "@/types";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -24,107 +18,72 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = "leguard_token";
-
-function getStoredToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-function setStoredToken(token: string | null) {
-  if (typeof window === "undefined") return;
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: user, isLoading } = useUser();
+  const loginMutation = useLogin();
+  const registerMutation = useRegister();
+  const logoutMutation = useLogout();
+  const updateProfileMutation = useUpdateProfile();
 
-  const fetchUser = useCallback(async (token: string) => {
-    try {
-      const res = await fetch("/api/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
-      } else {
-        setStoredToken(null);
-        setUser(null);
+  const login = useCallback(
+    async (email: string, password: string, rememberMe?: boolean): Promise<string | null> => {
+      try {
+        await loginMutation.mutateAsync({ email, password, remember_me: rememberMe });
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : "Login failed";
       }
-    } catch {
-      setUser(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [loginMutation]
+  );
 
-  useEffect(() => {
-    const token = getStoredToken();
-    if (token) {
-      fetchUser(token);
-    } else {
-      setIsLoading(false);
-    }
-  }, [fetchUser]);
+  const signup = useCallback(
+    async (name: string, email: string, password: string, country?: string): Promise<string | null> => {
+      try {
+        await registerMutation.mutateAsync({
+          full_name: name,
+          email,
+          password,
+          default_country: country,
+        });
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : "Registration failed";
+      }
+    },
+    [registerMutation]
+  );
 
-  const login = useCallback(async (email: string, password: string, rememberMe?: boolean): Promise<string | null> => {
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, remember_me: rememberMe }),
-      });
-      const data = await res.json();
-      if (!res.ok) return data.message || "Login failed";
-      setStoredToken(data.token);
-      setUser(data.user);
-      return null;
-    } catch {
-      return "Network error. Please check your connection.";
-    }
-  }, []);
+  const logout = useCallback(() => {
+    logoutMutation.mutate();
+  }, [logoutMutation]);
 
-  const signup = useCallback(async (name: string, email: string, password: string, country?: string): Promise<string | null> => {
-    try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name: name, email, password, default_country: country }),
-      });
-      const data = await res.json();
-      if (!res.ok) return data.message || "Registration failed";
-      setStoredToken(data.token);
-      setUser(data.user);
-      return null;
-    } catch {
-      return "Network error. Please check your connection.";
-    }
-  }, []);
-
-  const logout = useCallback(async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    setStoredToken(null);
-    setUser(null);
-  }, []);
-
-  const updateUser = useCallback((data: Partial<AuthUser>) => {
-    setUser(prev => prev ? { ...prev, ...data } : null);
-  }, []);
+  const updateUser = useCallback(
+    (data: Partial<AuthUser>) => {
+      const { full_name, default_country, risk_sensitivity, onboarding_complete } = data;
+      updateProfileMutation.mutate({ full_name, default_country, risk_sensitivity, onboarding_complete });
+    },
+    [updateProfileMutation]
+  );
 
   const refreshUser = useCallback(async () => {
-    const token = getStoredToken();
-    if (token) {
-      await fetchUser(token);
-    }
-  }, [fetchUser]);
+    await queryClient.invalidateQueries({ queryKey: ["user"] });
+  }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, signup, logout, updateUser, refreshUser }}>
+    <AuthContext.Provider
+      value={{
+        user: user ?? null,
+        isAuthenticated: !!user,
+        isLoading,
+        login,
+        signup,
+        logout,
+        updateUser,
+        refreshUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin, getSupabaseAuth } from '@/lib/supabase';
 import { registerSchema } from '@/lib/schemas';
+import { logActivity, upsertProfile } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,8 +9,7 @@ export async function POST(req: NextRequest) {
     const parsed = registerSchema.safeParse(body);
 
     if (!parsed.success) {
-      const firstIssue = parsed.error.issues[0];
-      const message = firstIssue?.message || 'Full name, email, and password are required.';
+      const message = parsed.error.issues[0]?.message || 'Invalid input.';
       return NextResponse.json({ error: true, message }, { status: 400 });
     }
 
@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
         full_name,
         default_country: default_country || 'United States',
         risk_sensitivity: 'standard',
+        theme: 'system',
         onboarding_complete: false,
       },
     });
@@ -52,16 +53,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Account created. Please sign in.' });
     }
 
-    const meta = data.user?.user_metadata ?? {};
+    const createdUser = data.user!;
+
+    upsertProfile(createdUser.id, {
+      full_name,
+      email: email.toLowerCase(),
+      default_country: default_country || 'United States',
+      risk_sensitivity: 'standard',
+      theme: 'system',
+      onboarding_complete: 0,
+    });
+
+    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
+    logActivity(createdUser.id, 'register', 'User registered', ip);
+
+    const meta = createdUser.user_metadata ?? {};
 
     return NextResponse.json({
       token: signInData.session.access_token,
+      refresh_token: signInData.session.refresh_token,
       user: {
-        id: data.user!.id,
-        email: data.user!.email,
+        id: createdUser.id,
+        email: createdUser.email,
         full_name: meta.full_name || full_name,
+        avatar_url: meta.avatar_url || '',
         default_country: meta.default_country || 'United States',
         risk_sensitivity: meta.risk_sensitivity || 'standard',
+        theme: meta.theme || 'system',
         onboarding_complete: !!meta.onboarding_complete,
       },
     });

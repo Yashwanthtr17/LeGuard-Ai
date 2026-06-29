@@ -54,15 +54,75 @@ export function getDb(): Database.Database {
         created_at TEXT DEFAULT (datetime('now'))
       );
 
+      CREATE TABLE IF NOT EXISTS profiles (
+        id TEXT PRIMARY KEY,
+        full_name TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '',
+        default_country TEXT DEFAULT 'United States',
+        risk_sensitivity TEXT DEFAULT 'standard',
+        theme TEXT DEFAULT 'system',
+        onboarding_complete INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS activity_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT DEFAULT '',
+        ip_address TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
       CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_activity_log_user_id ON activity_log(user_id);
+      CREATE INDEX IF NOT EXISTS idx_activity_log_action ON activity_log(action);
     `);
   } catch (e) {
     console.warn('DB init warning:', e);
   }
 
   return db;
+}
+
+export function logActivity(userId: string, action: string, details = '', ipAddress = ''): void {
+  try {
+    getDb().prepare(
+      'INSERT INTO activity_log (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)'
+    ).run(userId, action, details, ipAddress);
+  } catch (e) {
+    console.warn('[activity_log] Failed to log:', e);
+  }
+}
+
+export function getProfile(userId: string): Record<string, unknown> | null {
+  try {
+    const profile = getDb().prepare('SELECT * FROM profiles WHERE id = ?').get(userId) as Record<string, unknown> | undefined;
+    return profile || null;
+  } catch {
+    return null;
+  }
+}
+
+export function upsertProfile(userId: string, data: Record<string, unknown>): void {
+  try {
+    const existing = getDb().prepare('SELECT id FROM profiles WHERE id = ?').get(userId);
+    if (existing) {
+      const sets = Object.keys(data).map(k => `${k} = ?`).join(', ');
+      const values = Object.values(data);
+      getDb().prepare(`UPDATE profiles SET ${sets}, updated_at = datetime('now') WHERE id = ?`).run(...values, userId);
+    } else {
+      const keys = ['id', ...Object.keys(data)];
+      const placeholders = keys.map(() => '?').join(', ');
+      const values = [userId, ...Object.values(data)];
+      getDb().prepare(`INSERT INTO profiles (${keys.join(', ')}) VALUES (${placeholders})`).run(...values);
+    }
+  } catch (e) {
+    console.warn('[profiles] Upsert failed:', e);
+  }
 }
 
 const dbInstance = getDb();
