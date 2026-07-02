@@ -97,3 +97,5 @@ src/
 - Security headers set via next.config.ts (X-Frame-Options, CSP, etc.)
 - AI API keys are never exposed to the client
 - Zod validation on all request bodies
+
+-Developed By Yashwanth T R
