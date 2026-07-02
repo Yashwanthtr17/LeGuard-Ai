@@ -10,6 +10,7 @@ import {
   useDeleteReport,
   useFavoriteReport,
   useDownloadReportPdf,
+  useGenerateReport,
 } from "@/lib/hooks/use-reports";
 
 interface Clause {
@@ -37,6 +38,14 @@ interface Obligation {
   party: string;
   obligation: string;
 }
+
+// TODO: Wire up analytics provider (e.g. PostHog, Mixpanel) to track:
+//       - report_view   (when page loads)
+//       - report_generate (when user clicks Generate PDF)
+//       - report_download (when user clicks Download PDF)
+//       - report_share    (when user creates share link)
+//       - report_print    (when user prints)
+// Example: analytics.track('report_view', { reportId: id, riskScore: score })
 
 function getRiskColor(score: number): string {
   if (score >= 7) return "#EF4444";
@@ -362,6 +371,7 @@ export default function ReportPage() {
   const deleteMutation = useDeleteReport();
   const favoriteMutation = useFavoriteReport();
   const downloadMutation = useDownloadReportPdf();
+  const generateMutation = useGenerateReport();
 
   const [showDelete, setShowDelete] = useState(false);
   const [showShare, setShowShare] = useState(false);
@@ -394,6 +404,8 @@ export default function ReportPage() {
 
     return {
       fileName: (doc?.original_name as string) || (r?.title as string) || "Untitled",
+      pdfStoragePath: (r?.pdf_storage_path as string) || null,
+      generationStatus: (r?.generation_status as string) || null,
       documentType: (a?.document_type_detected as string) || "",
       overallScore: (a?.overall_score as number) ?? 0,
       riskLevel: (a?.risk_level as string) || "LOW",
@@ -438,19 +450,27 @@ export default function ReportPage() {
     setShowDelete(false);
   }
 
+  function handleGeneratePdf() {
+    generateMutation.mutate(id);
+  }
+
   function handleDownloadPdf() {
-    downloadMutation.mutate(id, {
-      onSuccess: (blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${report?.fileName?.replace(/\.[^.]+$/, "") || "report"}_report.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      },
-    });
+    if (report?.generationStatus === "completed" && report?.pdfStoragePath) {
+      downloadMutation.mutate(id, {
+        onSuccess: (blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${report?.fileName?.replace(/\.[^.]+$/, "") || "report"}_report.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        },
+      });
+    } else {
+      handleGeneratePdf();
+    }
   }
 
   function handlePrint() {
@@ -560,6 +580,16 @@ export default function ReportPage() {
       {showDelete && <ConfirmModal onConfirm={handleDelete} onCancel={() => setShowDelete(false)} />}
       {showShare && <ShareModal onClose={() => setShowShare(false)} url={typeof window !== "undefined" ? window.location.href : ""} />}
 
+      {/* Watermark overlay */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden print:block" aria-hidden="true">
+        <div className="flex items-center justify-center w-full h-full">
+          <span className="text-[12rem] sm:text-[16rem] font-black text-primary/5 select-none"
+            style={{ transform: "rotate(-35deg)", letterSpacing: "0.3em", lineHeight: 1 }}>
+            Leguard-AI
+          </span>
+        </div>
+      </div>
+
       {/* Sticky Header */}
       <motion.div
         initial={{ y: -20, opacity: 0 }}
@@ -574,7 +604,20 @@ export default function ReportPage() {
             </svg>
           </Link>
           <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-foreground truncate max-w-[160px] sm:max-w-xs md:max-w-md">{report.fileName}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-semibold text-foreground truncate max-w-[140px] sm:max-w-xs md:max-w-md">{report.fileName}</h1>
+              {report.generationStatus === "completed" && (
+                <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 bg-success/10 text-success text-[9px] font-bold rounded-md">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                  PDF Ready
+                </span>
+              )}
+              {report.generationStatus === "failed" && (
+                <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 bg-danger/10 text-danger text-[9px] font-bold rounded-md">
+                  PDF Failed
+                </span>
+              )}
+            </div>
             <p className="text-[10px] text-subtle hidden sm:block">{report.documentTypeDetected || report.documentType} &middot; {report.countryApplied || report.jurisdiction}</p>
           </div>
         </div>
@@ -601,14 +644,37 @@ export default function ReportPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
             </svg>
           </button>
-          <button onClick={handleDownloadPdf}
-            className="px-3 py-2 bg-primary text-white text-xs font-semibold rounded-xl hover:bg-primary-dark transition-colors flex items-center gap-1.5 shadow-sm"
-            disabled={downloadMutation.isPending}>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <span className="hidden sm:inline">{downloadMutation.isPending ? "Downloading..." : "Download PDF"}</span>
-          </button>
+          {report.generationStatus === "completed" ? (
+            <button onClick={handleDownloadPdf}
+              className="px-3 py-2 bg-primary text-white text-xs font-semibold rounded-xl hover:bg-primary-dark transition-colors flex items-center gap-1.5 shadow-sm"
+              disabled={downloadMutation.isPending}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="hidden sm:inline">{downloadMutation.isPending ? "Downloading..." : "Download PDF"}</span>
+            </button>
+          ) : (
+            <button onClick={handleGeneratePdf}
+              className="px-3 py-2 bg-primary text-white text-xs font-semibold rounded-xl hover:bg-primary-dark transition-colors flex items-center gap-1.5 shadow-sm"
+              disabled={generateMutation.isPending}>
+              {generateMutation.isPending ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span className="hidden sm:inline">Generating...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  <span className="hidden sm:inline">Generate PDF</span>
+                </>
+              )}
+            </button>
+          )}
           <button onClick={() => setShowDelete(true)}
             className="p-2 text-subtle hover:text-danger hover:bg-red-50 rounded-xl transition-colors" title="Delete">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1298,6 +1364,14 @@ export default function ReportPage() {
           </div>
         </div>
 
+        {/* ===== Report Footer (print only) ===== */}
+        <div className="hidden print:block mt-8 pt-4 border-t border-border text-[8px] text-muted">
+          <div className="flex justify-between">
+            <span>Confidential — Generated by Leguard-AI</span>
+            <span>{id} | {new Date().toLocaleDateString()}</span>
+          </div>
+        </div>
+
         {/* ===== Disclaimer ===== */}
         <motion.div
           id="disclaimer"
@@ -1317,11 +1391,12 @@ export default function ReportPage() {
             This report is AI-generated and does not constitute legal advice. It is intended for informational and educational purposes only. The analysis may contain errors, omissions, or inaccuracies. Always consult a qualified lawyer licensed in your jurisdiction for legal decisions. By using this report, you agree that LeGuard-AI and its operators bear no liability for any actions taken based on this analysis.
           </p>
           <p className="text-[10px] text-muted mt-3">
-            Generated on {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            Report ID: {id} &middot; Generated on {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}
           </p>
         </motion.div>
 
       </div>
+
     </div>
   );
 }

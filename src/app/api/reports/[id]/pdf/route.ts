@@ -1,328 +1,329 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
-import { getUserFromRequest } from '@/lib/supabase';
-
-interface ReportRow {
-  id: string;
-  document_name: string;
-  document_type: string;
-  overall_score: number;
-  risk_level: string;
-  created_at: string;
-  country: string;
-  full_analysis: string;
-  executive_summary: string;
-  verdict: string;
-}
+import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getReport, logActivity } from '@/lib/services/database';
+import { getReportPdfUrl, getReportPdfBuffer } from '@/lib/services/storage';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getUserFromRequest(req);
-  if (!user) {
-    return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
-  }
+  try {
+    const user = await getUserFromRequest(req);
+    if (!user) {
+      return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
+    }
 
-  const { id } = await params;
-  const report = db.prepare('SELECT * FROM reports WHERE id = ? AND user_id = ?').get(id, user.id) as ReportRow;
-  if (!report) {
-    return NextResponse.json({ error: true, message: 'Report not found.' }, { status: 404 });
-  }
+    const { id } = await params;
 
-  const analysis = JSON.parse(report.full_analysis || '{}');
-  const { jsPDF } = await import('jspdf');
+    const reportData = await getReport(id);
+    if (!reportData) {
+      return NextResponse.json({ error: true, message: 'Report not found.' }, { status: 404 });
+    }
 
-  const doc = new jsPDF('p', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
-  let y = 20;
+    const report = reportData as unknown as Record<string, unknown>;
+    if (report.user_id !== user.id) {
+      return NextResponse.json({ error: true, message: 'Access denied.' }, { status: 403 });
+    }
 
-  function addPage() {
-    doc.addPage();
-    y = 20;
-  }
+    const pdfStoragePath = report.pdf_storage_path as string | null;
 
-  function wrapText(text: string, maxWidth: number): string[] {
-    const lines: string[] = [];
-    const words = text.split(' ');
-    const fontSize = doc.getFontSize();
-    const scaleFactor = doc.internal.scaleFactor;
-    let line = '';
-    for (const word of words) {
-      const testLine = line ? `${line} ${word}` : word;
-      const metrics = doc.getStringUnitWidth(testLine) * fontSize / scaleFactor;
-      if (metrics > maxWidth && line) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = testLine;
+    if (pdfStoragePath) {
+      try {
+        const signedUrl = await getReportPdfUrl(pdfStoragePath);
+
+        logActivity(user.id, 'report_download', 'reports', id, {
+          source: 'storage',
+        }).catch(() => {});
+
+        return NextResponse.redirect(signedUrl);
+      } catch {
+        // Fall through to on-the-fly generation if storage retrieval fails
       }
     }
-    if (line) lines.push(line);
-    return lines;
-  }
 
-  function addSection(title: string, body: string, color?: string) {
-    if (y > 250) addPage();
-    if (color) {
-      doc.setTextColor(color === 'red' ? 229 : color === 'amber' ? 214 : color === 'green' ? 56 : 30);
-    } else {
-      doc.setTextColor(30, 32, 44);
+    // On-the-fly generation fallback (matching existing behavior)
+    const analysis = report.analysis as Record<string, unknown> | undefined;
+
+    const supabase = getSupabaseAdmin();
+    const { data: doc } = await supabase
+      .from('documents')
+      .select('original_name')
+      .eq('id', report.document_id as string)
+      .single();
+
+    const documentName = (doc as Record<string, unknown> | undefined)?.original_name as string || report.title as string || 'Untitled';
+
+    const { jsPDF } = await import('jspdf');
+
+    const pdfDoc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdfDoc.internal.pageSize.getWidth();
+    let y = 20;
+
+    function addPage() {
+      pdfDoc.addPage();
+      y = 20;
     }
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text(title, 20, y);
-    y += 8;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.setTextColor(74, 85, 104);
-    const lines = wrapText(body, pageWidth - 40);
-    for (const line of lines) {
-      if (y > 275) addPage();
-      doc.text(line, 20, y);
-      y += 5;
+
+    function wrapText(text: string, maxWidth: number): string[] {
+      return pdfDoc.splitTextToSize(text || '', maxWidth);
     }
-    y += 4;
-  }
 
-  // Cover Page
-  doc.setFillColor(30, 58, 95);
-  doc.rect(0, 0, pageWidth, 297, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(36);
-  doc.setFont('helvetica', 'bold');
-  doc.text('LeGuard-AI', 20, 80);
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Legal Document Risk Analysis Report', 20, 92);
-  doc.setFontSize(10);
-  doc.text(`Document: ${report.document_name}`, 20, 110);
-  doc.text(`Date: ${new Date(report.created_at).toLocaleDateString()}`, 20, 118);
-  doc.text(`Country: ${report.country}`, 20, 126);
-  doc.text(`Risk Score: ${report.overall_score}/10 - ${report.risk_level}`, 20, 134);
-  doc.setFontSize(8);
-  doc.setTextColor(180, 200, 220);
-  doc.text('This report is AI-generated and does not constitute legal advice.', 20, 270);
-  doc.text('Consult a qualified lawyer for legal decisions.', 20, 276);
+    // Cover Page
+    pdfDoc.setFillColor(30, 41, 59);
+    pdfDoc.rect(0, 0, pageWidth, 297, 'F');
+    pdfDoc.setTextColor(255, 255, 255);
+    pdfDoc.setFontSize(28);
+    pdfDoc.setFont('helvetica', 'bold');
+    pdfDoc.text('LeGuard-AI', 20, 60);
+    pdfDoc.setFontSize(12);
+    pdfDoc.setFont('helvetica', 'normal');
+    pdfDoc.text('Legal Document Risk Analysis Report', 20, 72);
+    pdfDoc.setFontSize(10);
+    pdfDoc.text(`Document: ${documentName}`, 20, 95);
+    pdfDoc.text(`Report ID: ${id}`, 20, 103);
+    pdfDoc.text(`Date: ${report.created_at ? new Date(report.created_at as string).toLocaleDateString() : new Date().toLocaleDateString()}`, 20, 111);
+    const score = (analysis?.overall_score as number) ?? 0;
+    const level = (analysis?.risk_level as string) || 'LOW';
+    pdfDoc.text(`Risk Score: ${score.toFixed(1)}/10 - ${level}`, 20, 119);
+    pdfDoc.setFontSize(8);
+    pdfDoc.setTextColor(148, 163, 184);
+    pdfDoc.text('This report is AI-generated and does not constitute legal advice.', 20, 270);
+    pdfDoc.text('Consult a qualified lawyer for legal decisions.', 20, 276);
 
-  // Page 2 - Executive Summary
-  addPage();
-  doc.setTextColor(30, 58, 95);
-  doc.setFontSize(20);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Executive Summary', 20, y);
-  y += 12;
-  addSection('', report.executive_summary || analysis.executive_summary || 'Analysis complete.');
-
-  // Overall Risk Score
-  if (y > 220) addPage();
-  doc.setTextColor(30, 58, 95);
-  doc.setFontSize(20);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Overall Risk Score', 20, y);
-  y += 12;
-
-  doc.setFontSize(48);
-  doc.setTextColor(
-    report.overall_score >= 7 ? 229 : report.overall_score >= 4 ? 214 : 56,
-    report.overall_score >= 7 ? 62 : report.overall_score >= 4 ? 158 : 161,
-    report.overall_score >= 7 ? 62 : report.overall_score >= 4 ? 46 : 105
-  );
-  doc.text(`${report.overall_score}/10`, 20, y + 10);
-  y += 20;
-  doc.setFontSize(10);
-  doc.setTextColor(74, 85, 104);
-  const lines = wrapText(analysis.verdict || report.verdict || '', pageWidth - 40);
-  for (const line of lines) {
-    doc.text(line, 20, y);
-    y += 5;
-  }
-  y += 6;
-
-  // Clause-by-Clause
-  if (analysis.clauses && analysis.clauses.length > 0) {
-    if (y > 210) addPage();
-    doc.setTextColor(30, 58, 95);
-    doc.setFontSize(20);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Clause-by-Clause Analysis', 20, y);
+    // Executive Summary
+    addPage();
+    pdfDoc.setTextColor(30, 41, 59);
+    pdfDoc.setFontSize(18);
+    pdfDoc.setFont('helvetica', 'bold');
+    pdfDoc.text('Executive Summary', 20, y);
     y += 12;
 
-    for (const clause of analysis.clauses) {
-      if (y > 230) addPage();
-      doc.setFillColor(clause.risk_score >= 7 ? 254 : clause.risk_score >= 4 ? 255 : 240, clause.risk_score >= 7 ? 242 : clause.risk_score >= 4 ? 250 : 245, clause.risk_score >= 7 ? 242 : clause.risk_score >= 4 ? 240 : 240);
-      doc.roundedRect(20, y - 2, pageWidth - 40, 5, 2, 2, 'F');
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(30, 32, 44);
-      doc.text(`${clause.name}`, 24, y + 3);
-      doc.setFontSize(9);
-      doc.setTextColor(clause.risk_score >= 7 ? 229 : clause.risk_score >= 4 ? 214 : 56, clause.risk_score >= 7 ? 62 : clause.risk_score >= 4 ? 158 : 161, clause.risk_score >= 7 ? 62 : clause.risk_score >= 4 ? 46 : 105);
-      doc.text(`Risk: ${clause.risk_score}/10`, pageWidth - 60, y + 3);
-      y += 12;
+    pdfDoc.setFont('helvetica', 'normal');
+    pdfDoc.setFontSize(10);
+    pdfDoc.setTextColor(71, 85, 105);
+    const execSummary = (analysis?.executive_summary as string) || (analysis?.verdict as string) || 'Analysis complete.';
+    const summaryLines = wrapText(execSummary, pageWidth - 40);
+    for (const line of summaryLines) {
+      if (y > 275) addPage();
+      pdfDoc.text(line, 20, y);
+      y += 5;
+    }
 
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(74, 85, 104);
-      doc.text('What it says:', 24, y);
-      y += 5;
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(74, 85, 104);
-      const plainLines = wrapText(clause.plain_english || '', pageWidth - 48);
-      for (const line of plainLines) {
-        if (y > 270) addPage();
-        doc.text(line, 28, y);
-        y += 4;
-      }
-      y += 3;
-      doc.setFont('helvetica', 'bold');
-      doc.text('Recommendation:', 24, y);
-      y += 5;
-      doc.setFont('helvetica', 'normal');
-      const recLines = wrapText(clause.recommendation || '', pageWidth - 48);
-      for (const line of recLines) {
-        if (y > 270) addPage();
-        doc.text(line, 28, y);
-        y += 4;
-      }
-      y += 2;
-      if (clause.location) {
-        doc.setFont('helvetica', 'italic');
-        doc.setTextColor(160, 174, 192);
-        doc.text(`Found in: ${clause.location}`, 24, y);
-        y += 3;
+    // Risk Score
+    y += 6;
+    if (y > 240) addPage();
+    pdfDoc.setTextColor(30, 41, 59);
+    pdfDoc.setFontSize(18);
+    pdfDoc.setFont('helvetica', 'bold');
+    pdfDoc.text('Risk Score', 20, y);
+    y += 12;
+
+    const rColor = score >= 7 ? [239, 68, 68] : score >= 4 ? [245, 158, 11] : [16, 185, 129];
+    pdfDoc.setFontSize(36);
+    pdfDoc.setTextColor(rColor[0], rColor[1], rColor[2]);
+    pdfDoc.text(`${score.toFixed(1)}/10`, 20, y);
+    y += 14;
+
+    pdfDoc.setFontSize(10);
+    pdfDoc.setTextColor(71, 85, 105);
+    const verdict = (analysis?.verdict as string) || '';
+    if (verdict) {
+      const vLines = wrapText(verdict, pageWidth - 40);
+      for (const line of vLines) {
+        if (y > 275) addPage();
+        pdfDoc.text(line, 20, y);
+        y += 5;
       }
       y += 4;
     }
-  }
 
-  // Country Compliance
-  if (analysis.country_compliance && analysis.country_compliance.length > 0) {
-    if (y > 220) addPage();
-    doc.setTextColor(30, 58, 95);
-    doc.setFontSize(20);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Country-Specific Compliance', 20, y);
-    y += 12;
+    // Top Findings
+    const clauses = (analysis?.clauses as Record<string, unknown>[]) || [];
+    const topClauses = clauses.sort((a, b) => (b.risk_score as number) - (a.risk_score as number)).filter(c => (c.risk_score as number) >= 4).slice(0, 10);
 
-    for (const item of analysis.country_compliance) {
-      if (y > 260) addPage();
-      const statusColor = item.status === 'COMPLIANT' ? [56, 161, 105] : item.status === 'NON_COMPLIANT' ? [229, 62, 62] : [214, 158, 46];
-      const statusIcon = item.status === 'COMPLIANT' ? '✓' : item.status === 'NON_COMPLIANT' ? '✗' : '⚠';
-      doc.setFontSize(10);
-      doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
-      doc.text(`${statusIcon} ${item.law}`, 24, y);
-      y += 5;
-      doc.setFontSize(9);
-      doc.setTextColor(74, 85, 104);
-      const noteLines = wrapText(item.note || '', pageWidth - 48);
-      for (const line of noteLines) {
-        doc.text(line, 28, y);
+    if (topClauses.length > 0) {
+      if (y > 220) addPage();
+      pdfDoc.setTextColor(30, 41, 59);
+      pdfDoc.setFontSize(16);
+      pdfDoc.setFont('helvetica', 'bold');
+      pdfDoc.text('Top Items to Review', 20, y);
+      y += 10;
+
+      for (const clause of topClauses) {
+        if (y > 250) addPage();
+        const cScore = (clause.risk_score as number) || 5;
+        const cColor = cScore >= 7 ? [239, 68, 68] : cScore >= 4 ? [245, 158, 11] : [16, 185, 129];
+        pdfDoc.setFillColor(cColor[0], cColor[1], cColor[2]);
+        pdfDoc.rect(20, y - 1, 4, 14, 'F');
+        pdfDoc.setTextColor(30, 32, 44);
+        pdfDoc.setFontSize(10);
+        pdfDoc.setFont('helvetica', 'bold');
+        pdfDoc.text(`${clause.name as string}`, 28, y + 4);
+        pdfDoc.setTextColor(cColor[0], cColor[1], cColor[2]);
+        pdfDoc.setFontSize(8);
+        pdfDoc.text(`Risk: ${cScore.toFixed(1)}/10`, pageWidth - 50, y + 4);
+        y += 12;
+        pdfDoc.setTextColor(71, 85, 105);
+        pdfDoc.setFont('helvetica', 'normal');
+        pdfDoc.setFontSize(9);
+        const why = (clause.why_it_matters as string) || (clause.plain_english as string) || '';
+        const whyLines = wrapText(why, pageWidth - 56);
+        for (const line of whyLines) {
+          if (y > 275) addPage();
+          pdfDoc.text(line, 28, y);
+          y += 4;
+        }
         y += 4;
       }
+    }
+
+    // Detailed Analysis
+    if (clauses.length > 0) {
+      addPage();
+      y = 20;
+      pdfDoc.setTextColor(30, 41, 59);
+      pdfDoc.setFontSize(16);
+      pdfDoc.setFont('helvetica', 'bold');
+      pdfDoc.text('Detailed Clause Analysis', 20, y);
+      y += 12;
+
+      for (const clause of clauses) {
+        if (y > 240) addPage();
+        const cScore = (clause.risk_score as number) || 5;
+        pdfDoc.setFillColor(248, 250, 252);
+        pdfDoc.roundedRect(20, y - 2, pageWidth - 40, 6, 2, 2, 'F');
+        pdfDoc.setTextColor(30, 32, 44);
+        pdfDoc.setFont('helvetica', 'bold');
+        pdfDoc.setFontSize(10);
+        pdfDoc.text(clause.name as string, 24, y + 3);
+        pdfDoc.setFontSize(8);
+        pdfDoc.setTextColor(
+          cScore >= 7 ? 239 : cScore >= 4 ? 245 : 16,
+          cScore >= 7 ? 68 : cScore >= 4 ? 158 : 185,
+          cScore >= 7 ? 68 : cScore >= 4 ? 46 : 129
+        );
+        pdfDoc.text(`Risk: ${cScore.toFixed(1)}/10`, pageWidth - 50, y + 3);
+        y += 14;
+
+        pdfDoc.setFont('helvetica', 'bold');
+        pdfDoc.setFontSize(8);
+        pdfDoc.setTextColor(22, 163, 74);
+        pdfDoc.text('What it says:', 24, y);
+        y += 5;
+        pdfDoc.setFont('helvetica', 'normal');
+        pdfDoc.setTextColor(71, 85, 105);
+        const plainLines = wrapText((clause.plain_english as string) || '', pageWidth - 48);
+        for (const l of plainLines) {
+          if (y > 275) addPage();
+          pdfDoc.text(l, 28, y);
+          y += 4;
+        }
+        y += 2;
+
+        pdfDoc.setFont('helvetica', 'bold');
+        pdfDoc.setTextColor(217, 119, 6);
+        pdfDoc.text('Why it matters:', 24, y);
+        y += 5;
+        pdfDoc.setFont('helvetica', 'normal');
+        pdfDoc.setTextColor(71, 85, 105);
+        const whyLines = wrapText((clause.why_it_matters as string) || '', pageWidth - 48);
+        for (const l of whyLines) {
+          if (y > 275) addPage();
+          pdfDoc.text(l, 28, y);
+          y += 4;
+        }
+        y += 2;
+
+        pdfDoc.setFont('helvetica', 'bold');
+        pdfDoc.setTextColor(37, 99, 235);
+        pdfDoc.text('Recommendation:', 24, y);
+        y += 5;
+        pdfDoc.setFont('helvetica', 'normal');
+        pdfDoc.setTextColor(71, 85, 105);
+        const recLines = wrapText((clause.recommendation as string) || '', pageWidth - 48);
+        for (const l of recLines) {
+          if (y > 275) addPage();
+          pdfDoc.text(l, 28, y);
+          y += 4;
+        }
+
+        if (clause.location) {
+          pdfDoc.setFont('helvetica', 'italic');
+          pdfDoc.setTextColor(148, 163, 184);
+          pdfDoc.text(`Found in: ${clause.location as string}`, 24, y + 2);
+          y += 4;
+        }
+        y += 6;
+      }
+    }
+
+    // Recommendations
+    const recommendations: string[] = [];
+    for (const c of clauses) {
+      if (c.recommendation) recommendations.push(c.recommendation as string);
+    }
+    if (recommendations.length > 0) {
+      addPage();
+      y = 20;
+      pdfDoc.setTextColor(30, 41, 59);
+      pdfDoc.setFontSize(16);
+      pdfDoc.setFont('helvetica', 'bold');
+      pdfDoc.text('Recommendations', 20, y);
+      y += 12;
+
+      for (const rec of recommendations) {
+        if (y > 260) addPage();
+        pdfDoc.setFontSize(9);
+        pdfDoc.setFont('helvetica', 'normal');
+        pdfDoc.setTextColor(71, 85, 105);
+        const recLines = wrapText(`• ${rec}`, pageWidth - 44);
+        for (const l of recLines) {
+          pdfDoc.text(l, 24, y);
+          y += 4;
+        }
+        y += 2;
+      }
+    }
+
+    // Disclaimer
+    if (y > 250) addPage();
+    pdfDoc.setDrawColor(226, 232, 240);
+    pdfDoc.line(20, y, pageWidth - 20, y);
+    y += 6;
+    pdfDoc.setFontSize(7);
+    pdfDoc.setFont('helvetica', 'italic');
+    pdfDoc.setTextColor(148, 163, 184);
+    const discLines = wrapText(
+      'This report is AI-generated and does not constitute legal advice. It is intended for informational and educational purposes only. Always consult a qualified lawyer for legal decisions.',
+      pageWidth - 40
+    );
+    for (const l of discLines) {
+      pdfDoc.text(l, 20, y);
       y += 3;
     }
-  }
 
-  // Risk Summary Table
-  if (analysis.clauses && analysis.clauses.length > 0) {
-    if (y > 200) addPage();
-    doc.setTextColor(30, 58, 95);
-    doc.setFontSize(20);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Risk Summary', 20, y);
-    y += 12;
-
-    // Table header
-    doc.setFillColor(30, 58, 95);
-    doc.rect(20, y - 2, pageWidth - 40, 8, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Clause', 24, y + 4);
-    doc.text('Risk Level', 85, y + 4);
-    doc.text('Score', 130, y + 4);
-    doc.text('Location', 155, y + 4);
-    y += 10;
-
-    // Table rows
-    for (const clause of analysis.clauses) {
-      if (y > 270) addPage();
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(30, 32, 44);
-      doc.text(clause.name || '', 24, y);
-      doc.setTextColor(
-        clause.risk_score >= 7 ? 229 : clause.risk_score >= 4 ? 214 : 56,
-        clause.risk_score >= 7 ? 62 : clause.risk_score >= 4 ? 158 : 161,
-        clause.risk_score >= 7 ? 62 : clause.risk_score >= 4 ? 46 : 105
-      );
-      const level = clause.risk_level || (clause.risk_score >= 7 ? 'HIGH' : clause.risk_score >= 4 ? 'MEDIUM' : 'LOW');
-      doc.text(level, 85, y);
-      doc.setTextColor(30, 32, 44);
-      doc.text(`${clause.risk_score}/10`, 130, y);
-      doc.text(clause.location || '-', 155, y);
-      y += 7;
+    // Footer on all pages
+    const pageCount = pdfDoc.internal.pages.length - 1;
+    for (let i = 1; i <= pageCount; i++) {
+      pdfDoc.setPage(i);
+      pdfDoc.setFontSize(6);
+      pdfDoc.setTextColor(148, 163, 184);
+      pdfDoc.text('Confidential — Generated by Leguard-AI', 20, 285);
+      pdfDoc.text(`${id} | Page ${i} of ${pageCount} | ${new Date().toLocaleDateString()}`, pageWidth - 70, 285);
     }
+
+    const pdfBuffer = Buffer.from(pdfDoc.output('arraybuffer'));
+
+    logActivity(user.id, 'report_download', 'reports', id, {
+      source: 'on_the_fly',
+      size_bytes: pdfBuffer.length,
+    }).catch(() => {});
+
+    return new NextResponse(pdfBuffer, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${documentName.replace(/\.[^.]+$/, '')}_report.pdf"`,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to download report PDF.';
+    return NextResponse.json({ error: true, message }, { status: 500 });
   }
-
-  // Recommendations
-  const recommendations: string[] = [];
-  if (analysis.clauses) {
-    for (const clause of analysis.clauses) {
-      if (clause.recommendation) recommendations.push(clause.recommendation);
-    }
-  }
-
-  if (recommendations.length > 0) {
-    if (y > 200) addPage();
-    doc.setTextColor(30, 58, 95);
-    doc.setFontSize(20);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Recommendations', 20, y);
-    y += 12;
-
-    for (const rec of recommendations) {
-      if (y > 260) addPage();
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(74, 85, 104);
-      const recLines = wrapText(`• ${rec}`, pageWidth - 44);
-      for (const line of recLines) {
-        doc.text(line, 24, y);
-        y += 4;
-      }
-      y += 2;
-    }
-  }
-
-  // Disclaimer
-  if (y > 250) addPage();
-  doc.setDrawColor(200, 200, 200);
-  doc.line(20, y, pageWidth - 20, y);
-  y += 6;
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'italic');
-  doc.setTextColor(160, 174, 192);
-  const discLines = wrapText('This report is AI-generated and does not constitute legal advice. Consult a qualified lawyer for legal decisions.', pageWidth - 40);
-  for (const line of discLines) {
-    doc.text(line, 20, y);
-    y += 3;
-  }
-
-  // Page numbers
-  const pageCount = doc.internal.pages.length - 1;
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(7);
-    doc.setTextColor(160, 174, 192);
-    if (i > 1) {
-      doc.text(`Page ${i} of ${pageCount}`, pageWidth - 30, 285);
-    }
-  }
-
-  const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
-  return new NextResponse(pdfBuffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${report.document_name.replace(/\.[^.]+$/, '')}_report.pdf"`,
-    },
-  });
 }

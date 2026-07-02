@@ -51,6 +51,8 @@ export interface ReportSummary {
   overall_score: number;
   risk_level: RiskLevel;
   created_at: string;
+  is_favorite?: boolean;
+  generation_status?: string | null;
 }
 
 export interface DashboardStats {

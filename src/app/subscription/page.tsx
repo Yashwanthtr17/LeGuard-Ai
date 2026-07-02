@@ -95,7 +95,6 @@ function SectionCard({ title, description, children, className }: { title: strin
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     Active: "bg-success/10 text-success border border-success/20",
-    Cancelled: "bg-warning/10 text-warning border border-warning/20",
     Expired: "bg-danger/10 text-danger border border-danger/20",
   };
   return (
@@ -122,8 +121,7 @@ export default function SubscriptionPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [selectedPlan, setSelectedPlan] = useState("pro");
-  const [showCancelModal, setShowCancelModal] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
+
 
   useEffect(() => {
     if (authLoading) return;
@@ -141,14 +139,6 @@ export default function SubscriptionPage() {
   }
 
   if (!isAuthenticated) return null;
-
-  function handleCancelSubscription() {
-    setCancelling(true);
-    setTimeout(() => {
-      setCancelling(false);
-      setShowCancelModal(false);
-    }, 1500);
-  }
 
   return (
     <div className="flex-1 bg-background min-h-screen">
@@ -290,44 +280,6 @@ export default function SubscriptionPage() {
           </div>
           <p className="text-xs text-muted mt-3">Payment integration coming soon. This is a placeholder for demonstration.</p>
         </SectionCard>
-
-        <div className="bg-surface rounded-2xl border border-danger/30 p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-danger">Cancel Subscription</h2>
-              <p className="text-sm text-subtle mt-1">
-                Your subscription will remain active until the end of the current billing period. After that, you will lose access to premium features.
-              </p>
-            </div>
-            {!showCancelModal ? (
-              <button
-                onClick={() => setShowCancelModal(true)}
-                className="px-5 py-2.5 bg-danger text-white font-semibold rounded-xl hover:bg-red-700 transition-all text-sm shrink-0"
-              >
-                Cancel
-              </button>
-            ) : (
-              <div className="text-right space-y-3 shrink-0">
-                <p className="text-sm font-semibold text-danger">Are you sure?</p>
-                <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={handleCancelSubscription}
-                    disabled={cancelling}
-                    className="px-4 py-2 bg-danger text-white font-semibold rounded-xl hover:bg-red-700 disabled:opacity-50 transition-all text-sm"
-                  >
-                    {cancelling ? "Cancelling..." : "Yes, cancel"}
-                  </button>
-                  <button
-                    onClick={() => setShowCancelModal(false)}
-                    className="px-4 py-2 border border-border text-foreground font-semibold rounded-xl hover:bg-surface-hover transition-all text-sm"
-                  >
-                    Keep plan
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
 
       </div>
     </div>

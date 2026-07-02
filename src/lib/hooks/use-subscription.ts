@@ -20,10 +20,9 @@ async function authFetch(url: string, options?: RequestInit): Promise<Response> 
 export interface Subscription {
   id: string;
   plan: string;
-  status: "active" | "canceled" | "past_due" | "trialing";
+  status: "active" | "past_due" | "trialing";
   current_period_start: string;
   current_period_end: string;
-  cancel_at_period_end: boolean;
 }
 
 export interface PaymentRecord {
@@ -53,22 +52,6 @@ export function usePaymentHistory() {
       const res = await authFetch("/api/subscription/payments");
       if (!res.ok) throw new Error("Failed to fetch payment history");
       return res.json();
-    },
-  });
-}
-
-export function useCancelSubscription() {
-  const queryClient = useQueryClient();
-
-  return useMutation<Subscription, Error, void>({
-    mutationFn: async () => {
-      const res = await authFetch("/api/subscription/cancel", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Cancellation failed");
-      return data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["subscription"] });
     },
   });
 }

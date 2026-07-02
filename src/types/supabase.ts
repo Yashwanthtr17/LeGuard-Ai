@@ -21,6 +21,12 @@ export interface Database {
         Update: Record<string, unknown>
         Relationships: []
       }
+      two_factor_challenges: {
+        Row: TwoFactorChallenge
+        Insert: Record<string, unknown>
+        Update: Record<string, unknown>
+        Relationships: []
+      }
       documents: {
         Row: Document
         Insert: Record<string, unknown>
@@ -164,6 +170,17 @@ export interface TwoFactor {
   created_at: string
 }
 
+export interface TwoFactorChallenge {
+  id: string
+  user_id: string
+  challenge_token: string
+  access_token: string
+  refresh_token: string
+  expires_at: string
+  used: boolean
+  created_at: string
+}
+
 export interface Document {
   id: string
   user_id: string
@@ -213,11 +230,24 @@ export interface Report {
   document_id: string
   title: string
   pdf_url: string | null
+  pdf_storage_path: string | null
+  generation_status: string | null
+  generation_error: string | null
   is_favorite: boolean
   is_archived: boolean
   deleted_at: string | null
   created_at: string
   updated_at: string
+  generated_at: string | null
+}
+
+export interface ReportShare {
+  id: string
+  report_id: string
+  token: string
+  created_by: string
+  expires_at: string
+  created_at: string
 }
 
 export interface Clause {
@@ -273,11 +303,9 @@ export interface Subscription {
   status: string
   current_period_start: string | null
   current_period_end: string | null
-  cancel_at_period_end: boolean
   payment_provider: string | null
   payment_provider_id: string | null
   created_at: string
-  updated_at: string
 }
 
 export interface Payment {

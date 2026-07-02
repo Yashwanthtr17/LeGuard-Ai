@@ -103,7 +103,21 @@ export function useDownloadReportPdf() {
       const res = await fetch(`/api/reports/${id}/pdf`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error("Failed to download PDF");
+      if (!res.ok) {
+        if (res.headers.get("content-type")?.includes("application/json")) {
+          const data = await res.json();
+          throw new Error(data.message || "Failed to download PDF");
+        }
+        throw new Error("Failed to download PDF");
+      }
+
+      if (res.redirected) {
+        // Signed URL redirect — fetch the PDF directly
+        const pdfRes = await fetch(res.url);
+        if (!pdfRes.ok) throw new Error("Failed to download PDF from storage");
+        return pdfRes.blob();
+      }
+
       return res.blob();
     },
   });
@@ -115,15 +129,32 @@ export interface ShareReportInput {
 }
 
 export function useShareReport() {
-  return useMutation<{ share_url: string }, Error, ShareReportInput>({
+  return useMutation<{ share_url: string; direct_pdf_url: string }, Error, ShareReportInput>({
     mutationFn: async (input) => {
       const res = await authFetch(`/api/reports/${input.id}/share`, {
         method: "POST",
-        body: JSON.stringify({ expires_in_days: input.expires_in_days ?? 7 }),
+        body: JSON.stringify({ expires_in_hours: (input.expires_in_days ?? 7) * 24 }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to create share link");
       return data;
+    },
+  });
+}
+
+export function useGenerateReport() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; storage_path: string; size_bytes: number; method: string }, Error, string>({
+    mutationFn: async (id) => {
+      const res = await authFetch(`/api/reports/${id}/generate`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to generate report");
+      return data;
+    },
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["reports", id] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
     },
   });
 }

@@ -63,10 +63,16 @@ interface UpdateProfileInput {
   onboarding_complete?: boolean;
 }
 
+export interface LoginResponseWith2FA extends LoginResponse {
+  requires_2fa?: boolean;
+  challenge_token?: string;
+  email?: string;
+}
+
 export function useLogin() {
   const queryClient = useQueryClient();
 
-  return useMutation<LoginResponse, Error, LoginInput>({
+  return useMutation<LoginResponseWith2FA, Error, LoginInput>({
     mutationFn: async (input) => {
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -75,11 +81,15 @@ export function useLogin() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Login failed");
-      setToken(data.token);
+      if (!data.requires_2fa) {
+        setToken(data.token);
+      }
       return data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user"] });
+    onSuccess: (data) => {
+      if (!data.requires_2fa) {
+        queryClient.invalidateQueries({ queryKey: ["user"] });
+      }
     },
   });
 }

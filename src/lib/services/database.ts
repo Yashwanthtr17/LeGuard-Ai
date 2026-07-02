@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase';
 import type {
   Profile, Document, Analysis, Report, Clause, CountryCompliance,
-  RiskItem, TimelineEvent, Obligation, Subscription, Notification,
+  RiskItem, TimelineEvent, Obligation, Subscription, Notification, ReportShare, TwoFactor, TwoFactorChallenge,
 } from '@/types/supabase';
 
 function admin() {
@@ -216,6 +216,59 @@ export async function favoriteReport(reportId: string, isFavorite: boolean): Pro
   if (error) throw error;
 }
 
+export async function updateReportPdfPath(reportId: string, pdfStoragePath: string): Promise<void> {
+  const { error } = await admin()
+    .from('reports')
+    .update({
+      pdf_storage_path: pdfStoragePath,
+      updated_at: new Date().toISOString(),
+    } as never)
+    .eq('id', reportId);
+
+  if (error) throw error;
+}
+
+export async function getReportPdfPath(reportId: string): Promise<string | null> {
+  const { data, error } = await admin()
+    .from('reports')
+    .select('pdf_storage_path')
+    .eq('id', reportId)
+    .single();
+
+  if (error || !data) return null;
+  return (data as Record<string, unknown>).pdf_storage_path as string | null;
+}
+
+export async function createShareLink(
+  reportId: string,
+  userId: string,
+  expiresAt: string
+): Promise<ReportShare> {
+  const { data, error } = await admin()
+    .from('report_shares')
+    .insert({
+      report_id: reportId,
+      created_by: userId,
+      expires_at: expiresAt,
+    } as never)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as ReportShare;
+}
+
+export async function getShareLink(token: string): Promise<ReportShare | null> {
+  const { data, error } = await admin()
+    .from('report_shares')
+    .select('*')
+    .eq('token', token)
+    .single();
+
+  if (error) return null;
+  return data as ReportShare;
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 export interface DashboardStats {
@@ -405,4 +458,155 @@ export async function getUserSubscription(userId: string): Promise<Subscription 
 
   if (error && error.code !== 'PGRST116') throw error;
   return data as Subscription | null;
+}
+
+// ─── 2FA ─────────────────────────────────────────────────────────────────────
+
+export async function getTwoFactorStatus(userId: string): Promise<Pick<TwoFactor, 'enabled' | 'created_at'> | null> {
+  const { data, error } = await admin()
+    .from('two_factor')
+    .select('enabled, created_at')
+    .eq('user_id', userId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  return data as Pick<TwoFactor, 'enabled' | 'created_at'> | null;
+}
+
+export async function getTwoFactorSecret(userId: string): Promise<string | null> {
+  const { data, error } = await admin()
+    .from('two_factor')
+    .select('secret')
+    .eq('user_id', userId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  return (data as { secret: string | null } | null)?.secret ?? null;
+}
+
+export async function upsertTwoFactorSecret(
+  userId: string,
+  secret: string
+): Promise<void> {
+  const existing = await admin()
+    .from('two_factor')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (existing.data?.id) {
+    const { error } = await admin()
+      .from('two_factor')
+      .update({ secret, enabled: false } as never)
+      .eq('user_id', userId);
+
+    if (error) throw error;
+  } else {
+    const { error } = await admin()
+      .from('two_factor')
+      .insert({ user_id: userId, secret, enabled: false } as never);
+
+    if (error) throw error;
+  }
+}
+
+export async function enableTwoFactor(
+  userId: string,
+  backupCodes: string[]
+): Promise<void> {
+  const { error } = await admin()
+    .from('two_factor')
+    .update({
+      enabled: true,
+      backup_codes: backupCodes,
+    } as never)
+    .eq('user_id', userId);
+
+  if (error) throw error;
+}
+
+export async function disableTwoFactor(userId: string): Promise<void> {
+  const { error } = await admin()
+    .from('two_factor')
+    .update({
+      secret: null,
+      enabled: false,
+      backup_codes: null,
+    } as never)
+    .eq('user_id', userId);
+
+  if (error) throw error;
+}
+
+export async function clearTwoFactorSecret(userId: string): Promise<void> {
+  const { error } = await admin()
+    .from('two_factor')
+    .update({ secret: null } as never)
+    .eq('user_id', userId);
+
+  if (error) throw error;
+}
+
+export async function createTwoFactorChallenge(
+  userId: string,
+  challengeToken: string,
+  accessToken: string,
+  refreshToken: string
+): Promise<void> {
+  const { error } = await admin()
+    .from('two_factor_challenges')
+    .insert({
+      user_id: userId,
+      challenge_token: challengeToken,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    } as never);
+
+  if (error) throw error;
+}
+
+export async function getTwoFactorChallenge(
+  challengeToken: string
+): Promise<TwoFactorChallenge | null> {
+  const { data, error } = await admin()
+    .from('two_factor_challenges')
+    .select('*')
+    .eq('challenge_token', challengeToken)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  return data as TwoFactorChallenge | null;
+}
+
+export async function markChallengeUsed(challengeToken: string): Promise<void> {
+  const { error } = await admin()
+    .from('two_factor_challenges')
+    .update({ used: true } as never)
+    .eq('challenge_token', challengeToken);
+
+  if (error) throw error;
+}
+
+export async function getBackupCodes(userId: string): Promise<string[] | null> {
+  const { data, error } = await admin()
+    .from('two_factor')
+    .select('backup_codes')
+    .eq('user_id', userId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  return (data as { backup_codes: string[] | null } | null)?.backup_codes ?? null;
+}
+
+export async function updateBackupCodes(
+  userId: string,
+  backupCodes: string[]
+): Promise<void> {
+  const { error } = await admin()
+    .from('two_factor')
+    .update({ backup_codes: backupCodes } as never)
+    .eq('user_id', userId);
+
+  if (error) throw error;
 }

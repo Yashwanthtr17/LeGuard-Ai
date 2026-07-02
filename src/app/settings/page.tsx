@@ -4,9 +4,10 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUser, useUpdateProfile } from "@/lib/hooks/use-auth";
-import { useUpdatePassword, useDeleteAccount, useExportData } from "@/lib/hooks/use-settings";
+import { useUpdatePassword, useExportData } from "@/lib/hooks/use-settings";
 import { useTheme } from "@/lib/theme-context";
 import { CountrySelect } from "@/components/CountrySelect";
+import { Modal } from "@/components/ui/Modal";
 
 interface Session {
   id: string;
@@ -73,7 +74,6 @@ export default function SettingsPage() {
   const { data: user, isLoading: userLoading } = useUser();
   const updateProfile = useUpdateProfile();
   const updatePassword = useUpdatePassword();
-  const deleteAccount = useDeleteAccount();
   const exportData = useExportData();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
@@ -82,13 +82,23 @@ export default function SettingsPage() {
   const [fullName, setFullName] = useState("");
   const [defaultCountry, setDefaultCountry] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [twoFactorEnabled] = useState(false);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [show2faSetup, setShow2faSetup] = useState(false);
+  const [show2faDisable, setShow2faDisable] = useState(false);
+  const [showBackupCodes, setShowBackupCodes] = useState(false);
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [qrCode, setQrCode] = useState("");
+  const [setupSecret, setSetupSecret] = useState("");
+  const [verifyCode, setVerifyCode] = useState("");
+  const [disablePassword, setDisablePassword] = useState("");
+  const [codesPassword, setCodesPassword] = useState("");
+  const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
+  const [twoFactorSubmitting, setTwoFactorSubmitting] = useState(false);
 
   const [notifications, setNotifications] = useState({
     email_notifications: true,
@@ -110,6 +120,23 @@ export default function SettingsPage() {
       return res.json();
     },
     enabled: !!user,
+  });
+
+  const { isLoading: twoFactorLoading } = useQuery({
+    queryKey: ["2fa-status"],
+    queryFn: async () => {
+      const token = localStorage.getItem("leguard_token");
+      const res = await fetch("/api/auth/2fa/status", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to fetch 2FA status");
+      setTwoFactorEnabled(data.enabled);
+      return data;
+    },
+    enabled: !!user,
+    retry: false,
+    staleTime: 30000,
   });
 
   const deleteSession = useMutation({
@@ -195,20 +222,6 @@ export default function SettingsPage() {
     );
   }
 
-  function handleDeleteAccount() {
-    setMessage(null);
-    deleteAccount.mutate(undefined, {
-      onSuccess: () => {
-        queryClient.clear();
-        router.push("/");
-      },
-      onError: (err) => {
-        setMessage({ type: "error", text: err.message || "Account deletion failed." });
-        setShowDeleteConfirm(false);
-      },
-    });
-  }
-
   function handleNotificationToggle(key: keyof typeof notifications) {
     const updated = { ...notifications, [key]: !notifications[key] };
     setNotifications(updated);
@@ -246,6 +259,96 @@ export default function SettingsPage() {
         setMessage({ type: "error", text: "Export failed." });
       },
     });
+  }
+
+  async function handle2faSetup() {
+    setTwoFactorError(null);
+    setTwoFactorSubmitting(true);
+    try {
+      const token = localStorage.getItem("leguard_token");
+      const res = await fetch("/api/auth/2fa/setup", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (!res.ok) { setTwoFactorError(data.message); setTwoFactorSubmitting(false); return; }
+      setQrCode(data.qrCode);
+      setSetupSecret(data.secret);
+      setShow2faSetup(true);
+    } catch {
+      setTwoFactorError("Failed to initialize 2FA.");
+    }
+    setTwoFactorSubmitting(false);
+  }
+
+  async function handle2faEnable() {
+    if (verifyCode.length !== 6) return;
+    setTwoFactorError(null);
+    setTwoFactorSubmitting(true);
+    try {
+      const token = localStorage.getItem("leguard_token");
+      const res = await fetch("/api/auth/2fa/enable", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: JSON.stringify({ code: verifyCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTwoFactorError(data.message); setTwoFactorSubmitting(false); return; }
+      setBackupCodes(data.backupCodes);
+      setTwoFactorEnabled(true);
+      setShow2faSetup(false);
+      setVerifyCode("");
+      setQrCode("");
+      setSetupSecret("");
+      setShowBackupCodes(true);
+    } catch {
+      setTwoFactorError("Failed to enable 2FA.");
+    }
+    setTwoFactorSubmitting(false);
+  }
+
+  async function handle2faDisable() {
+    if (!disablePassword) return;
+    setTwoFactorError(null);
+    setTwoFactorSubmitting(true);
+    try {
+      const token = localStorage.getItem("leguard_token");
+      const res = await fetch("/api/auth/2fa/disable", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: JSON.stringify({ password: disablePassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTwoFactorError(data.message); setTwoFactorSubmitting(false); return; }
+      setTwoFactorEnabled(false);
+      setShow2faDisable(false);
+      setDisablePassword("");
+      setBackupCodes([]);
+    } catch {
+      setTwoFactorError("Failed to disable 2FA.");
+    }
+    setTwoFactorSubmitting(false);
+  }
+
+  async function handleRegenerateCodes() {
+    if (!codesPassword) return;
+    setTwoFactorError(null);
+    setTwoFactorSubmitting(true);
+    try {
+      const token = localStorage.getItem("leguard_token");
+      const res = await fetch("/api/auth/2fa/codes", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: JSON.stringify({ password: codesPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setTwoFactorError(data.message); setTwoFactorSubmitting(false); return; }
+      setBackupCodes(data.backupCodes);
+      setCodesPassword("");
+    } catch {
+      setTwoFactorError("Failed to regenerate codes.");
+    }
+    setTwoFactorSubmitting(false);
   }
 
   return (
@@ -403,10 +506,48 @@ export default function SettingsPage() {
                   <p className="text-xs text-subtle">Add an extra layer of security to your account</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-warning bg-warning/10 px-2 py-0.5 rounded-full">Coming Soon</span>
-                  <Toggle enabled={twoFactorEnabled} onChange={() => {}} />
+                  {twoFactorLoading ? (
+                    <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      {twoFactorEnabled ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-success bg-success/10 px-2 py-0.5 rounded-full">Enabled</span>
+                      ) : (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted bg-surface-hover px-2 py-0.5 rounded-full">Disabled</span>
+                      )}
+                      <Toggle
+                        enabled={twoFactorEnabled}
+                        onChange={() => {
+                          if (twoFactorEnabled) {
+                            setTwoFactorError(null);
+                            setDisablePassword("");
+                            setShow2faDisable(true);
+                          } else {
+                            handle2faSetup();
+                          }
+                        }}
+                      />
+                    </>
+                  )}
                 </div>
               </div>
+              {twoFactorError && (
+                <p className="text-xs text-danger mt-1">{twoFactorError}</p>
+              )}
+
+              {twoFactorEnabled && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTwoFactorError(null);
+                    setCodesPassword("");
+                    setShowBackupCodes(true);
+                  }}
+                  className="text-xs text-primary font-semibold hover:underline mt-2"
+                >
+                  View or regenerate backup codes
+                </button>
+              )}
             </div>
 
             <hr className="border-border" />
@@ -501,42 +642,135 @@ export default function SettingsPage() {
           </div>
         </SectionCard>
 
-        <div className="bg-surface rounded-2xl border border-danger/30 p-6">
-          <div className="mb-5">
-            <h2 className="text-lg font-bold text-danger">Danger Zone</h2>
-            <p className="text-sm text-subtle mt-1">Irreversible actions that affect your account</p>
+
+      </div>
+
+      <Modal open={show2faSetup} onClose={() => { setShow2faSetup(false); setTwoFactorError(null); setVerifyCode(""); }} title="Set Up Two-Factor Authentication" maxWidth="max-w-md">
+        <div className="space-y-5">
+          <p className="text-sm text-subtle">
+            Scan this QR code with your authenticator app (Google Authenticator, Authy, or similar), then enter the 6-digit verification code below.
+          </p>
+          {qrCode && (
+            <div className="flex justify-center">
+              <img src={qrCode} alt="QR Code" className="w-48 h-48 rounded-xl border border-border" />
+            </div>
+          )}
+          {setupSecret && (
+            <div className="text-center">
+              <p className="text-xs text-subtle mb-1">Or enter this key manually:</p>
+              <code className="text-sm font-mono text-foreground bg-surface-hover px-3 py-1.5 rounded-lg select-all">{setupSecret}</code>
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-semibold text-foreground mb-1.5">Verification Code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={verifyCode}
+              onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="000000"
+              className="w-full px-4 py-3 rounded-xl border border-border text-foreground text-sm text-center font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all bg-surface"
+            />
           </div>
-          <p className="text-sm text-subtle mb-4">Permanently delete your account and all associated data. This action cannot be undone.</p>
-          {!showDeleteConfirm ? (
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={deleteAccount.isPending}
-              className="px-6 py-2.5 bg-danger text-white font-semibold rounded-xl hover:bg-red-700 transition-all text-sm disabled:opacity-50"
-            >
-              {deleteAccount.isPending ? "Deleting..." : "Delete my account"}
-            </button>
-          ) : (
-            <div className="space-y-3 animate-fade-in">
-              <p className="text-sm font-semibold text-danger">Are you absolutely sure? This cannot be undone.</p>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleDeleteAccount}
-                  disabled={deleteAccount.isPending}
-                  className="px-6 py-2.5 bg-danger text-white font-semibold rounded-xl hover:bg-red-700 transition-all text-sm disabled:opacity-50"
-                >
-                  {deleteAccount.isPending ? "Deleting..." : "Yes, delete my account"}
-                </button>
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="px-6 py-2.5 border border-border text-foreground font-semibold rounded-xl hover:bg-surface-hover transition-all text-sm"
-                >
-                  Cancel
-                </button>
+          {twoFactorError && (
+            <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 text-danger text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              {twoFactorError}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handle2faEnable}
+            disabled={twoFactorSubmitting || verifyCode.length !== 6}
+            className="w-full py-3 bg-gradient-to-br from-primary to-primary-dark text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {twoFactorSubmitting ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                Verifying...
+              </span>
+            ) : (
+              "Enable 2FA"
+            )}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={show2faDisable} onClose={() => { setShow2faDisable(false); setTwoFactorError(null); setDisablePassword(""); }} title="Disable Two-Factor Authentication" maxWidth="max-w-md">
+        <div className="space-y-5">
+          <p className="text-sm text-subtle">
+            Disabling 2FA makes your account less secure. Enter your current password to confirm.
+          </p>
+          <div>
+            <label className="block text-sm font-semibold text-foreground mb-1.5">Current Password</label>
+            <input
+              type="password"
+              value={disablePassword}
+              onChange={(e) => setDisablePassword(e.target.value)}
+              placeholder="Enter your password"
+              className="w-full px-4 py-3 rounded-xl border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all bg-surface"
+            />
+          </div>
+          {twoFactorError && (
+            <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 text-danger text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              {twoFactorError}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handle2faDisable}
+            disabled={twoFactorSubmitting || !disablePassword}
+            className="w-full py-3 bg-danger text-white font-semibold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {twoFactorSubmitting ? "Disabling..." : "Disable 2FA"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={showBackupCodes} onClose={() => { setShowBackupCodes(false); setTwoFactorError(null); setCodesPassword(""); }} title="Backup Codes" maxWidth="max-w-md">
+        <div className="space-y-5">
+          <p className="text-sm text-subtle">
+            Save these backup codes in a secure place. You can use each code once to access your account if you lose your authenticator device.
+          </p>
+          {backupCodes.length > 0 && (
+            <div className="bg-surface-hover rounded-xl p-4 border border-border">
+              <div className="grid grid-cols-2 gap-2">
+                {backupCodes.map((code, i) => (
+                  <code key={i} className="text-sm font-mono text-foreground bg-surface px-2 py-1.5 rounded-lg text-center select-all">{code}</code>
+                ))}
               </div>
             </div>
           )}
+          <hr className="border-border" />
+          <div>
+            <p className="text-sm font-semibold text-foreground mb-2">Regenerate Backup Codes</p>
+            <p className="text-xs text-subtle mb-3">This will invalidate your existing codes. Enter your password to confirm.</p>
+            <input
+              type="password"
+              value={codesPassword}
+              onChange={(e) => setCodesPassword(e.target.value)}
+              placeholder="Current password"
+              className="w-full px-4 py-3 rounded-xl border border-border text-foreground text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all bg-surface"
+            />
+            {twoFactorError && (
+              <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 text-danger text-sm mb-3 flex items-center gap-2">
+                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                {twoFactorError}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleRegenerateCodes}
+              disabled={twoFactorSubmitting || !codesPassword}
+              className="w-full py-3 bg-gradient-to-br from-primary to-primary-dark text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {twoFactorSubmitting ? "Regenerating..." : "Regenerate Codes"}
+            </button>
+          </div>
         </div>
-      </div>
+      </Modal>
     </div>
   );
 }

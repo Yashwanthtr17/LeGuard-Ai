@@ -301,9 +301,7 @@ export default function DashboardPage() {
                       ? `Active until ${new Date(subscription.current_period_end).toLocaleDateString()}`
                       : subscription?.status === "trialing"
                         ? "Trial period"
-                        : subscription?.status === "canceled"
-                          ? "Cancelled"
-                          : "Upgrade to unlock more features"}
+                        : "Upgrade to unlock more features"}
                   </p>
                 </div>
               </div>

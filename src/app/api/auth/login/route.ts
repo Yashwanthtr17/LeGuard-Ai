@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAuth } from '@/lib/supabase';
+import crypto from 'crypto';
+import { getSupabaseAuth, getSupabaseAdmin } from '@/lib/supabase';
 import { loginSchema } from '@/lib/schemas';
 import { logActivity } from '@/lib/db';
+import { createTwoFactorChallenge } from '@/lib/services/database';
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +28,30 @@ export async function POST(req: NextRequest) {
 
     const session = data.session;
     const user = data.user;
+
+    const admin = getSupabaseAdmin();
+    const { data: twoFactor } = await admin
+      .from('two_factor')
+      .select('enabled')
+      .eq('user_id', user!.id)
+      .single();
+
+    if (twoFactor?.enabled) {
+      const challengeToken = crypto.randomUUID();
+      await createTwoFactorChallenge(
+        user!.id,
+        challengeToken,
+        session.access_token,
+        session.refresh_token,
+      );
+
+      return NextResponse.json({
+        requires_2fa: true,
+        challenge_token: challengeToken,
+        email: user!.email,
+      });
+    }
+
     const meta = user?.user_metadata ?? {};
 
     const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';

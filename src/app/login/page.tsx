@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useOAuthSignIn } from "@/lib/hooks/use-auth";
 import { Modal } from "@/components/ui/Modal";
 
 function getPasswordStrength(pw: string) {
@@ -80,6 +81,7 @@ function LoginForm() {
   const [rememberMe, setRememberMe] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [modalContent, setModalContent] = useState<"privacy" | "terms" | null>(null);
+  const oauthMutation = useOAuthSignIn();
 
   const strength = getPasswordStrength(password);
 
@@ -152,10 +154,14 @@ function LoginForm() {
     }
 
     if (mode === "signin") {
-      const err = await login(email.trim(), password, rememberMe);
+      const result = await login(email.trim(), password, rememberMe);
       setSubmitting(false);
-      if (err) {
-        setError(err);
+      if (result.requires2fa && result.challengeToken) {
+        sessionStorage.setItem("2fa_challenge_token", result.challengeToken);
+        sessionStorage.setItem("2fa_email", result.email || email);
+        router.replace("/auth/2fa");
+      } else if (result.error) {
+        setError(result.error);
       } else {
         router.replace(searchParams.get("redirect") || "/dashboard");
       }
@@ -172,7 +178,7 @@ function LoginForm() {
   }
 
   function handleSocialLogin(provider: string) {
-    alert(`${provider} sign-in coming soon`);
+    oauthMutation.mutate(provider);
   }
 
   return (

@@ -5,11 +5,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useUser, useLogin, useRegister, useLogout, useUpdateProfile } from "@/lib/hooks/use-auth";
 import type { AuthUser } from "@/types";
 
+export interface LoginResult {
+  error: string | null;
+  requires2fa?: boolean;
+  challengeToken?: string;
+  email?: string;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<string | null>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<LoginResult>;
   signup: (name: string, email: string, password: string, country?: string) => Promise<string | null>;
   logout: () => void;
   updateUser: (data: Partial<AuthUser>) => void;
@@ -27,12 +34,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateProfileMutation = useUpdateProfile();
 
   const login = useCallback(
-    async (email: string, password: string, rememberMe?: boolean): Promise<string | null> => {
+    async (email: string, password: string, rememberMe?: boolean): Promise<LoginResult> => {
       try {
-        await loginMutation.mutateAsync({ email, password, remember_me: rememberMe });
-        return null;
+        const result = await loginMutation.mutateAsync({ email, password, remember_me: rememberMe });
+        if (result.requires_2fa) {
+          return {
+            error: null,
+            requires2fa: true,
+            challengeToken: result.challenge_token,
+            email: result.email,
+          };
+        }
+        return { error: null };
       } catch (err) {
-        return err instanceof Error ? err.message : "Login failed";
+        return { error: err instanceof Error ? err.message : "Login failed" };
       }
     },
     [loginMutation]

@@ -52,6 +52,20 @@ CREATE TABLE IF NOT EXISTS public.two_factor (
   UNIQUE(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS public.two_factor_challenges (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  challenge_token TEXT NOT NULL UNIQUE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_2fa_challenges_token ON public.two_factor_challenges(challenge_token);
+CREATE INDEX IF NOT EXISTS idx_2fa_challenges_user ON public.two_factor_challenges(user_id);
+
 -- ============================================================
 -- DOCUMENTS
 -- ============================================================
@@ -421,6 +435,7 @@ ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.two_factor ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.two_factor_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.support_tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
 
@@ -517,6 +532,11 @@ CREATE POLICY "Users can manage own 2FA"
   ON public.two_factor FOR ALL
   USING (auth.uid() = user_id);
 
+-- 2FA challenges: service role only (created/consumed by API)
+CREATE POLICY "Service role manages challenges"
+  ON public.two_factor_challenges FOR ALL
+  USING (auth.role() = 'service_role');
+
 -- Support tickets: users can CRUD own
 CREATE POLICY "Users can manage own tickets"
   ON public.support_tickets FOR ALL
@@ -559,3 +579,29 @@ BEGIN
   RETURN result;
 END;
 $$;
+
+-- ============================================================
+-- MIGRATION: Add PDF generation fields to reports
+-- ============================================================
+ALTER TABLE public.reports
+  ADD COLUMN IF NOT EXISTS pdf_storage_path TEXT,
+  ADD COLUMN IF NOT EXISTS generation_status TEXT DEFAULT NULL CHECK (generation_status IN ('pending', 'generating', 'completed', 'failed', NULL)),
+  ADD COLUMN IF NOT EXISTS generation_error TEXT,
+  ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_reports_generation ON public.reports(generation_status);
+
+-- ============================================================
+-- REPORT SHARES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.report_shares (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  report_id UUID NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(24), 'hex'),
+  created_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_shares_token ON public.report_shares(token);
+CREATE INDEX IF NOT EXISTS idx_report_shares_report ON public.report_shares(report_id);
