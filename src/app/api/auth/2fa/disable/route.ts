@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAuth } from '@/lib/supabase';
+import { getUserFromRequest, signInWithPassword } from '@/lib/supabase';
 import { disableTwoFactor } from '@/lib/services/database';
 import { logActivity } from '@/lib/db';
 
@@ -17,10 +17,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Current password is required to disable 2FA.' }, { status: 400 });
     }
 
-    const { error: authError } = await getSupabaseAuth().auth.signInWithPassword({
-      email: user.email,
-      password,
-    });
+    const { error: authError } = await signInWithPassword(user.email, password);
 
     if (authError) {
       return NextResponse.json({ error: true, message: 'Invalid password.' }, { status: 401 });

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateSecret, generateURI } from 'otplib';
 import QRCode from 'qrcode';
-import { getUserFromRequest, getSupabaseAuth } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
 import { upsertTwoFactorSecret } from '@/lib/services/database';
 
 export async function POST(req: NextRequest) {

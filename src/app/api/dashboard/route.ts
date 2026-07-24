@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/supabase';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { query, queryOne } from '@/lib/db-pool';
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,61 +9,53 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const supabase = getSupabaseAdmin();
-
     const [
       documentsCount,
       analysesCount,
       reportsCount,
-      avgScoreResult,
+      avgScoreRows,
       highRiskCount,
-      scoreResult,
+      scoreRows,
       recentReports,
       recentActivity,
-      notificationsResult,
-      subscriptionResult,
+      unreadCount,
+      subscriptionRows,
+      documents,
     ] = await Promise.all([
-      supabase.from('documents').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-      supabase.from('analyses').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-      supabase.from('reports').select('*', { count: 'exact', head: true }).eq('user_id', user.id).is('deleted_at', null),
-      supabase.from('analyses').select('overall_score').eq('user_id', user.id).eq('status', 'completed'),
-      supabase.from('analyses').select('*', { count: 'exact', head: true }).eq('user_id', user.id).eq('risk_level', 'HIGH'),
-      supabase.from('analyses').select('overall_score').eq('user_id', user.id).eq('status', 'completed'),
-      supabase.from('reports').select('id, title, overall_score, risk_level, created_at, document_id')
-        .eq('user_id', user.id).is('deleted_at', null)
-        .order('created_at', { ascending: false }).limit(5),
-      supabase.from('activity_logs').select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }).limit(10),
-      supabase.from('notifications').select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id).eq('is_read', false),
-      supabase.from('subscriptions').select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }).limit(1),
+      queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.documents WHERE user_id = $1', [user.id]),
+      queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.analyses WHERE user_id = $1', [user.id]),
+      queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.reports WHERE user_id = $1 AND deleted_at IS NULL', [user.id]),
+      query<{ overall_score: number }>('SELECT overall_score FROM public.analyses WHERE user_id = $1 AND status = $2', [user.id, 'completed']),
+      queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.analyses WHERE user_id = $1 AND risk_level = $2', [user.id, 'HIGH']),
+      query<{ overall_score: number }>('SELECT overall_score FROM public.analyses WHERE user_id = $1 AND status = $2', [user.id, 'completed']),
+      query('SELECT id, title, overall_score, risk_level, created_at, document_id FROM public.reports WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 5', [user.id]),
+      query('SELECT * FROM public.activity_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10', [user.id]),
+      queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.notifications WHERE user_id = $1 AND is_read = FALSE', [user.id]),
+      query('SELECT * FROM public.subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [user.id]),
+      query<{ file_size: number }>('SELECT file_size FROM public.documents WHERE user_id = $1', [user.id]),
     ]);
 
-    const totalDocuments = documentsCount.count || 0;
-    const totalAnalyses = analysesCount.count || 0;
-    const reportsSaved = reportsCount.count || 0;
+    const totalDocuments = parseInt(documentsCount?.count || '0', 10);
+    const totalAnalyses = parseInt(analysesCount?.count || '0', 10);
+    const reportsSaved = parseInt(reportsCount?.count || '0', 10);
 
-    const scores = ((avgScoreResult.data || []) as { overall_score: number }[]).map(r => r.overall_score);
+    const scores = avgScoreRows.map(r => r.overall_score);
     const avgRiskScore = scores.length > 0
       ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
       : 0;
 
-    const highRiskDocs = highRiskCount.count || 0;
+    const highRiskDocs = parseInt(highRiskCount?.count || '0', 10);
 
-    const allScores = ((scoreResult.data || []) as { overall_score: number }[]).map(r => r.overall_score);
+    const allScores = scoreRows.map(r => r.overall_score);
     const scoreDistribution = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     allScores.forEach(s => {
       const idx = Math.min(Math.max(Math.round(s), 0), 10);
       scoreDistribution[idx]++;
     });
 
-    const documents = await supabase.from('documents').select('file_size').eq('user_id', user.id);
-    const storageUsed = ((documents.data || []) as { file_size: number }[]).reduce((sum, d) => sum + (d.file_size || 0), 0);
+    const storageUsed = documents.reduce((sum, d) => sum + (d.file_size || 0), 0);
 
-    const subscription = (subscriptionResult.data || [])[0] || null;
+    const subscription = subscriptionRows[0] || null;
 
     return NextResponse.json({
       total_documents: totalDocuments,
@@ -73,9 +65,9 @@ export async function GET(req: NextRequest) {
       reports_saved: reportsSaved,
       storage_used: storageUsed,
       score_distribution: scoreDistribution,
-      recent_reports: recentReports.data || [],
-      recent_activity: recentActivity.data || [],
-      unread_notifications: notificationsResult.count || 0,
+      recent_reports: recentReports || [],
+      recent_activity: recentActivity || [],
+      unread_notifications: parseInt(unreadCount?.count || '0', 10),
       subscription: subscription ? {
         plan: (subscription as Record<string, unknown>).plan,
         status: (subscription as Record<string, unknown>).status,

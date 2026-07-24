@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query } from '@/lib/db-pool';
 import { getUserProfile, getUserDocuments, getUserReports, getUserAnalyses, getUserSubscription } from '@/lib/services/database';
 
 export async function GET(req: NextRequest) {
@@ -17,11 +18,7 @@ export async function GET(req: NextRequest) {
       getUserSubscription(user.id).catch(() => null),
     ]);
 
-    const { data: payments } = await getSupabaseAdmin()
-      .from('payments')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    const payments = await query('SELECT * FROM public.payments WHERE user_id = $1 ORDER BY created_at DESC', [user.id]);
 
     const exportData = {
       exported_at: new Date().toISOString(),

@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createBrowserClient } from "@/lib/supabase";
 import type { AuthUser } from "@/types";
 
 function getToken(): string | null {
@@ -165,16 +164,8 @@ export function useUpdateProfile() {
 
 export function useOAuthSignIn() {
   return useMutation<void, Error, string>({
-    mutationFn: async (provider: string) => {
-      const supabase = createBrowserClient();
-      const { error } = await supabase.auth.signInWithOAuth({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        provider: provider as any,
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-        },
-      });
-      if (error) throw new Error(error.message);
+    mutationFn: async (_provider: string) => {
+      throw new Error('OAuth sign-in is not available.');
     },
   });
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query, queryOne, execute } from '@/lib/db-pool';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,15 +9,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const { data, error } = await getSupabaseAdmin()
-      .from('sessions')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('last_active_at', { ascending: false });
+    const sessions = await query('SELECT * FROM public.sessions WHERE user_id = $1 ORDER BY last_active_at DESC', [user.id]);
 
-    if (error) throw error;
-
-    return NextResponse.json({ sessions: data || [] });
+    return NextResponse.json({ sessions: sessions || [] });
   } catch (err) {
     console.error('[sessions:get] Error:', err);
     return NextResponse.json({ error: true, message: 'Failed to fetch sessions.' }, { status: 500 });
@@ -37,23 +32,13 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Session ID is required.' }, { status: 400 });
     }
 
-    const { data: session, error: findError } = await getSupabaseAdmin()
-      .from('sessions')
-      .select('*')
-      .eq('id', session_id)
-      .eq('user_id', user.id)
-      .single();
+    const session = await queryOne('SELECT * FROM public.sessions WHERE id = $1 AND user_id = $2', [session_id, user.id]);
 
-    if (findError || !session) {
+    if (!session) {
       return NextResponse.json({ error: true, message: 'Session not found.' }, { status: 404 });
     }
 
-    const { error } = await getSupabaseAdmin()
-      .from('sessions')
-      .delete()
-      .eq('id', session_id);
-
-    if (error) throw error;
+    await execute('DELETE FROM public.sessions WHERE id = $1', [session_id]);
 
     return NextResponse.json({ success: true, message: 'Session terminated.' });
   } catch (err) {

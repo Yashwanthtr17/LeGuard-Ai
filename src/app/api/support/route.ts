@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query, queryOne, execute } from '@/lib/db-pool';
 import { generateId } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
@@ -16,22 +17,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Subject and message are required.' }, { status: 400 });
     }
 
-    const { data, error } = await getSupabaseAdmin()
-      .from('support_tickets')
-      .insert({
-        id: generateId(),
-        user_id: user.id,
-        subject,
-        message,
-        status: 'open',
-        priority: priority || 'normal',
-      } as never)
-      .select('*')
-      .single();
+    const ticket = await queryOne(
+      `INSERT INTO public.support_tickets (id, user_id, subject, message, status, priority)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [generateId(), user.id, subject, message, 'open', priority || 'normal']
+    );
 
-    if (error) throw error;
-
-    return NextResponse.json(data, { status: 201 });
+    return NextResponse.json(ticket, { status: 201 });
   } catch (err) {
     console.error('[support:post] Error:', err);
     return NextResponse.json({ error: true, message: 'Failed to create support ticket.' }, { status: 500 });
@@ -51,26 +43,29 @@ export async function GET(req: NextRequest) {
     const offset = (page - 1) * limit;
     const status = searchParams.get('status') || '';
 
-    let query = getSupabaseAdmin()
-      .from('support_tickets')
-      .select('*', { count: 'exact' })
-      .eq('user_id', user.id);
+    const conditions = ['user_id = $1'];
+    const params: unknown[] = [user.id];
+    let paramIdx = 2;
 
     if (status) {
-      query = query.eq('status', status);
+      conditions.push(`status = $${paramIdx++}`);
+      params.push(status);
     }
 
-    const { data, error, count } = await query
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const where = conditions.join(' AND ');
 
-    if (error) throw error;
+    const [tickets, countResult] = await Promise.all([
+      query(`SELECT * FROM public.support_tickets WHERE ${where} ORDER BY created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`, [...params, limit, offset]),
+      queryOne<{ count: string }>(`SELECT COUNT(*) as count FROM public.support_tickets WHERE ${where}`, params),
+    ]);
+
+    const total = parseInt(countResult?.count || '0', 10);
 
     return NextResponse.json({
-      tickets: data || [],
-      total: count || 0,
+      tickets: tickets || [],
+      total,
       page,
-      total_pages: Math.ceil((count || 0) / limit),
+      total_pages: Math.ceil(total / limit),
     });
   } catch (err) {
     console.error('[support:get] Error:', err);
@@ -97,32 +92,19 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Invalid status.' }, { status: 400 });
     }
 
-    const { data: ticket, error: findError } = await getSupabaseAdmin()
-      .from('support_tickets')
-      .select('*')
-      .eq('id', ticket_id)
-      .eq('user_id', user.id)
-      .single();
+    const ticket = await queryOne('SELECT * FROM public.support_tickets WHERE id = $1 AND user_id = $2', [ticket_id, user.id]);
 
-    if (findError || !ticket) {
+    if (!ticket) {
       return NextResponse.json({ error: true, message: 'Support ticket not found.' }, { status: 404 });
     }
 
-    const updates: Record<string, unknown> = {
-      status,
-      updated_at: new Date().toISOString(),
-    };
+    const now = new Date().toISOString();
 
     if (message) {
-      updates.message = message;
+      await execute('UPDATE public.support_tickets SET status = $1, message = $2, updated_at = $3 WHERE id = $4', [status, message, now, ticket_id]);
+    } else {
+      await execute('UPDATE public.support_tickets SET status = $1, updated_at = $2 WHERE id = $3', [status, now, ticket_id]);
     }
-
-    const { error } = await getSupabaseAdmin()
-      .from('support_tickets')
-      .update(updates as never)
-      .eq('id', ticket_id);
-
-    if (error) throw error;
 
     return NextResponse.json({ success: true });
   } catch (err) {

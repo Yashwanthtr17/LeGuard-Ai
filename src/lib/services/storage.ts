@@ -1,11 +1,24 @@
-import { getSupabaseAdmin } from '@/lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
+import { writeFile, unlink, mkdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 
-const DOCUMENTS_BUCKET = 'documents';
-const REPORTS_BUCKET = 'reports';
+const UPLOADS_DIR = join(process.cwd(), '.uploads');
+const DOCUMENTS_DIR = join(UPLOADS_DIR, 'documents');
+const REPORTS_DIR = join(UPLOADS_DIR, 'reports');
 
-function getClient(bucket: string = DOCUMENTS_BUCKET) {
-  return getSupabaseAdmin().storage.from(bucket);
+async function ensureDir(dir: string) {
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+}
+
+function getDocumentPath(relativePath: string): string {
+  return join(DOCUMENTS_DIR, relativePath);
+}
+
+function getReportPath(relativePath: string): string {
+  return join(REPORTS_DIR, relativePath);
 }
 
 export async function uploadDocument(
@@ -13,26 +26,31 @@ export async function uploadDocument(
   userId: string,
   fileName?: string
 ): Promise<string> {
+  await ensureDir(DOCUMENTS_DIR);
+
   const ext = fileName?.split('.').pop() || 'pdf';
-  const path = `${userId}/${uuidv4()}.${ext}`;
+  const relativePath = `${userId}/${uuidv4()}.${ext}`;
+  const fullPath = getDocumentPath(relativePath);
 
-  const { data, error } = await getClient().upload(path, file, {
-    contentType: fileName?.endsWith('.pdf') ? 'application/pdf' : undefined,
-    upsert: false,
-  });
+  await ensureDir(join(DOCUMENTS_DIR, userId));
 
-  if (error) throw new Error(`Storage upload failed: ${error.message}`);
-  return data.path;
+  const buffer = file instanceof Buffer ? file : Buffer.from(await file.arrayBuffer());
+  await writeFile(fullPath, buffer);
+
+  return relativePath;
 }
 
 export async function deleteDocument(path: string): Promise<void> {
-  const { error } = await getClient().remove([path]);
-  if (error) throw new Error(`Storage delete failed: ${error.message}`);
+  const fullPath = getDocumentPath(path);
+  try {
+    await unlink(fullPath);
+  } catch {
+    // file may not exist
+  }
 }
 
 export function getDocumentUrl(path: string): string {
-  const { data } = getClient().getPublicUrl(path);
-  return data.publicUrl;
+  return `/api/files/documents/${path}`;
 }
 
 export function getPdfUrl(path: string): string {
@@ -46,34 +64,28 @@ export async function uploadReportPdf(
   userId: string,
   reportId: string
 ): Promise<string> {
-  const path = `${userId}/${reportId}.pdf`;
+  await ensureDir(REPORTS_DIR);
+  await ensureDir(join(REPORTS_DIR, userId));
 
-  const { data, error } = await getClient(REPORTS_BUCKET).upload(path, buffer, {
-    contentType: 'application/pdf',
-    upsert: true,
-  });
+  const relativePath = `${userId}/${reportId}.pdf`;
+  const fullPath = getReportPath(relativePath);
 
-  if (error) throw new Error(`Report PDF upload failed: ${error.message}`);
-  return data.path;
+  await writeFile(fullPath, buffer);
+  return relativePath;
 }
 
 export async function getReportPdfUrl(path: string): Promise<string> {
-  const { data } = await getClient(REPORTS_BUCKET).createSignedUrl(path, 3600); // 1 hour expiry
-  if (!data?.signedUrl) throw new Error('Failed to generate signed URL');
-  return data.signedUrl;
+  return `/api/files/reports/${path}`;
 }
 
 export async function getReportPdfBuffer(path: string): Promise<Buffer> {
-  const { data, error } = await getClient(REPORTS_BUCKET).download(path);
-  if (error || !data) throw new Error('Failed to download report PDF');
-  return Buffer.from(await data.arrayBuffer());
+  const fullPath = getReportPath(path);
+  return readFile(fullPath);
 }
 
 export async function shareReportPdf(
   path: string,
-  expiresInHours: number = 24
+  _expiresInHours: number = 24
 ): Promise<string> {
-  const { data } = await getClient(REPORTS_BUCKET).createSignedUrl(path, expiresInHours * 3600);
-  if (!data?.signedUrl) throw new Error('Failed to generate share URL');
-  return data.signedUrl;
+  return `/api/files/reports/${path}`;
 }

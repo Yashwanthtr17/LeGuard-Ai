@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { queryOne } from '@/lib/db-pool';
 import { getUserDocuments, logActivity } from '@/lib/services/database';
 import { uploadDocument } from '@/lib/services/storage';
 import { validateFile } from '@/lib/validators';
@@ -63,23 +64,13 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const storagePath = await uploadDocument(buffer, user.id, file.name);
 
-    const admin = getSupabaseAdmin();
-    const { data: document, error } = await admin
-      .from('documents')
-      .insert({
-        user_id: user.id,
-        original_name: file.name,
-        file_type: metadata.data.document_type,
-        file_size: file.size,
-        storage_path: storagePath,
-        mime_type: file.type || null,
-        status: 'uploaded',
-        page_count: 0,
-      })
-      .select('id')
-      .single();
+    const document = await queryOne<{ id: string }>(
+      `INSERT INTO public.documents (user_id, original_name, file_type, file_size, storage_path, mime_type, status, page_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [user.id, file.name, metadata.data.document_type, file.size, storagePath, file.type || null, 'uploaded', 0]
+    );
 
-    if (error) throw error;
+    if (!document) throw new Error('Failed to create document.');
 
     await logActivity(user.id, 'document_upload', 'documents', document.id, {
       file_name: file.name,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/supabase';
-import { getReport } from '@/lib/services/database';
-import { logActivity } from '@/lib/services/database';
+import { queryOne } from '@/lib/db-pool';
+import { getReport, logActivity } from '@/lib/services/database';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -42,9 +42,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const documentId = report.document_id as string;
     let documentName = report.title as string || 'Untitled';
 
-    const supabase = (await import('@/lib/supabase')).getSupabaseAdmin();
-    const { data: doc } = await supabase.from('documents').select('original_name').eq('id', documentId).single();
-    if (doc) documentName = (doc as Record<string, unknown>).original_name as string || documentName;
+    const doc = await queryOne<{ original_name: string }>(
+      'SELECT original_name FROM public.documents WHERE id = $1',
+      [documentId]
+    );
+    if (doc) documentName = doc.original_name || documentName;
 
     logActivity(user.id, 'report_view', 'reports', id, {
       report_title: report.title,

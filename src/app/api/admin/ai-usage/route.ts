@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query, queryOne } from '@/lib/db-pool';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,21 +9,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const supabase = getSupabaseAdmin();
     const { searchParams } = new URL(req.url);
     const page = Math.max(parseInt(searchParams.get('page') || '1'), 1);
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '20'), 1), 100);
     const offset = (page - 1) * limit;
 
-    const { data: logs, error, count } = await supabase
-      .from('ai_usage_logs')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const countResult = await queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.ai_usage_logs');
+    const total = parseInt(countResult?.count || '0', 10);
 
-    if (error) throw error;
+    const logs = await query<Record<string, unknown>>(
+      'SELECT * FROM public.ai_usage_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
+    );
 
-    const allLogs = (logs || []) as Record<string, unknown>[];
+    const allLogs = logs;
     const totalTokens = allLogs.reduce((sum, l) => sum + ((l.tokens_in as number) || 0) + ((l.tokens_out as number) || 0), 0);
     const totalCalls = allLogs.length;
     const avgDuration = totalCalls > 0
@@ -70,9 +70,9 @@ export async function GET(req: NextRequest) {
         error_message: l.error_message,
         created_at: l.created_at,
       })),
-      total: count || 0,
+      total,
       page,
-      total_pages: Math.ceil((count || 0) / limit),
+      total_pages: Math.ceil(total / limit),
       summary: {
         total_tokens: totalTokens,
         total_calls: totalCalls,

@@ -1,36 +1,27 @@
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { query, queryOne, execute } from '@/lib/db-pool';
 import type {
   Profile, Document, Analysis, Report, Clause, CountryCompliance,
   RiskItem, TimelineEvent, Obligation, Subscription, Notification, ReportShare, TwoFactor, TwoFactorChallenge,
 } from '@/types/supabase';
 
-function admin() {
-  return getSupabaseAdmin();
-}
-
 // ─── Profiles ────────────────────────────────────────────────────────────────
 
 export async function getUserProfile(userId: string): Promise<Profile | null> {
-  const { data, error } = await admin()
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (error) throw error;
-  return data as Profile | null;
+  return queryOne<Profile>(
+    'SELECT * FROM public.profiles WHERE id = $1',
+    [userId]
+  );
 }
 
 export async function updateUserProfile(userId: string, data: Partial<Profile>): Promise<Profile> {
-  const { data: updated, error } = await admin()
-    .from('profiles')
-    .update(data)
-    .eq('id', userId)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return updated as Profile;
+  const keys = Object.keys(data).filter(k => k !== 'id');
+  const sets = keys.map((k, i) => `${k} = $${i + 2}`);
+  const values = keys.map(k => (data as Record<string, unknown>)[k]);
+  const rows = await query<Profile>(
+    `UPDATE public.profiles SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [userId, ...values]
+  );
+  return rows[0];
 }
 
 // ─── Documents ───────────────────────────────────────────────────────────────
@@ -50,28 +41,32 @@ export async function getUserDocuments(
   const { page = 1, limit = 20, status, sortBy = 'created_at', sortOrder = 'desc' } = options;
   const offset = (page - 1) * limit;
 
-  let query = admin()
-    .from('documents')
-    .select('*', { count: 'exact' })
-    .eq('user_id', userId);
+  const conditions = ['user_id = $1'];
+  const params: unknown[] = [userId];
+  let paramIdx = 2;
 
-  if (status) query = query.eq('status', status);
-  query = query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
+  if (status) {
+    conditions.push(`status = $${paramIdx++}`);
+    params.push(status);
+  }
 
-  const { data, error, count } = await query;
-  if (error) throw error;
-  return { data: (data || []) as Document[], total: count || 0 };
+  const where = conditions.join(' AND ');
+  const countRows = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM public.documents WHERE ${where}`,
+    params
+  );
+  const total = parseInt(countRows?.count || '0', 10);
+
+  const data = await query<Document>(
+    `SELECT * FROM public.documents WHERE ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
+    [...params, limit, offset]
+  );
+
+  return { data, total };
 }
 
 export async function getDocument(documentId: string): Promise<Document | null> {
-  const { data, error } = await admin()
-    .from('documents')
-    .select('*')
-    .eq('id', documentId)
-    .single();
-
-  if (error) throw error;
-  return data as Document | null;
+  return queryOne<Document>('SELECT * FROM public.documents WHERE id = $1', [documentId]);
 }
 
 // ─── Analyses ───────────────────────────────────────────────────────────────
@@ -85,32 +80,32 @@ export interface AnalysisWithRelations extends Analysis {
 }
 
 export async function createAnalysis(data: Partial<Analysis>): Promise<Analysis> {
-  const { data: created, error } = await admin()
-    .from('analyses')
-    .insert(data as never)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return created as Analysis;
+  const keys = Object.keys(data).filter(k => k !== 'id');
+  const values = keys.map(k => (data as Record<string, unknown>)[k]);
+  const placeholders = keys.map((_, i) => `$${i + 1}`);
+  const rows = await query<Analysis>(
+    `INSERT INTO public.analyses (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
+    values
+  );
+  return rows[0];
 }
 
 export async function getAnalysis(analysisId: string): Promise<AnalysisWithRelations | null> {
-  const { data, error } = await admin()
-    .from('analyses')
-    .select(`
-      *,
-      clauses (*),
-      country_compliance (*),
-      risk_items (*),
-      timeline_events (*),
-      obligations (*)
-    `)
-    .eq('id', analysisId)
-    .single();
+  const analysis = await queryOne<Analysis>(
+    'SELECT * FROM public.analyses WHERE id = $1',
+    [analysisId]
+  );
+  if (!analysis) return null;
 
-  if (error) throw error;
-  return data as AnalysisWithRelations | null;
+  const [clauses, country_compliance, risk_items, timeline_events, obligations] = await Promise.all([
+    query<Clause>('SELECT * FROM public.clauses WHERE analysis_id = $1 ORDER BY sort_order', [analysisId]),
+    query<CountryCompliance>('SELECT * FROM public.country_compliance WHERE analysis_id = $1', [analysisId]),
+    query<RiskItem>('SELECT * FROM public.risk_items WHERE analysis_id = $1 ORDER BY sort_order', [analysisId]),
+    query<TimelineEvent>('SELECT * FROM public.timeline_events WHERE analysis_id = $1 ORDER BY sort_order', [analysisId]),
+    query<Obligation>('SELECT * FROM public.obligations WHERE analysis_id = $1 ORDER BY sort_order', [analysisId]),
+  ]);
+
+  return { ...analysis, clauses, country_compliance, risk_items, timeline_events, obligations };
 }
 
 export interface AnalysisQueryOptions {
@@ -128,17 +123,28 @@ export async function getUserAnalyses(
   const { page = 1, limit = 20, status, sortBy = 'created_at', sortOrder = 'desc' } = options;
   const offset = (page - 1) * limit;
 
-  let query = admin()
-    .from('analyses')
-    .select('*', { count: 'exact' })
-    .eq('user_id', userId);
+  const conditions = ['user_id = $1'];
+  const params: unknown[] = [userId];
+  let paramIdx = 2;
 
-  if (status) query = query.eq('status', status);
-  query = query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
+  if (status) {
+    conditions.push(`status = $${paramIdx++}`);
+    params.push(status);
+  }
 
-  const { data, error, count } = await query;
-  if (error) throw error;
-  return { data: (data || []) as Analysis[], total: count || 0 };
+  const where = conditions.join(' AND ');
+  const countRows = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM public.analyses WHERE ${where}`,
+    params
+  );
+  const total = parseInt(countRows?.count || '0', 10);
+
+  const data = await query<Analysis>(
+    `SELECT * FROM public.analyses WHERE ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
+    [...params, limit, offset]
+  );
+
+  return { data, total };
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -160,83 +166,73 @@ export async function getUserReports(
   const { page = 1, limit = 20, search, isFavorite, isArchived, sortBy = 'created_at', sortOrder = 'desc' } = options;
   const offset = (page - 1) * limit;
 
-  let query = admin()
-    .from('reports')
-    .select('*', { count: 'exact' })
-    .eq('user_id', userId)
-    .is('deleted_at', null);
+  const conditions = ['user_id = $1', 'deleted_at IS NULL'];
+  const params: unknown[] = [userId];
+  let paramIdx = 2;
 
-  if (search) query = query.ilike('title', `%${search}%`);
-  if (isFavorite !== undefined) query = query.eq('is_favorite', isFavorite);
-  if (isArchived !== undefined) query = query.eq('is_archived', isArchived);
+  if (search) {
+    conditions.push(`title ILIKE $${paramIdx++}`);
+    params.push(`%${search}%`);
+  }
+  if (isFavorite !== undefined) {
+    conditions.push(`is_favorite = $${paramIdx++}`);
+    params.push(isFavorite);
+  }
+  if (isArchived !== undefined) {
+    conditions.push(`is_archived = $${paramIdx++}`);
+    params.push(isArchived);
+  }
 
-  query = query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
+  const where = conditions.join(' AND ');
+  const countRows = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM public.reports WHERE ${where}`,
+    params
+  );
+  const total = parseInt(countRows?.count || '0', 10);
 
-  const { data, error, count } = await query;
-  if (error) throw error;
-  return { data: (data || []) as Report[], total: count || 0 };
+  const data = await query<Report>(
+    `SELECT * FROM public.reports WHERE ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
+    [...params, limit, offset]
+  );
+
+  return { data, total };
 }
 
 export async function getReport(reportId: string): Promise<Report | null> {
-  const { data, error } = await admin()
-    .from('reports')
-    .select(`
-      *,
-      analysis:analysis_id (
-        *,
-        clauses (*),
-        country_compliance (*),
-        risk_items (*),
-        timeline_events (*),
-        obligations (*)
-      )
-    `)
-    .eq('id', reportId)
-    .single();
+  const report = await queryOne<Report>('SELECT * FROM public.reports WHERE id = $1', [reportId]);
+  if (!report) return null;
 
-  if (error) throw error;
-  return data as Report | null;
+  const analysis = await getAnalysis(report.analysis_id);
+  return { ...report, analysis } as unknown as Report;
 }
 
 export async function deleteReport(reportId: string): Promise<void> {
-  const { error } = await admin()
-    .from('reports')
-    .update({ deleted_at: new Date().toISOString() } as never)
-    .eq('id', reportId);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.reports SET deleted_at = $1, updated_at = $1 WHERE id = $2',
+    [new Date().toISOString(), reportId]
+  );
 }
 
 export async function favoriteReport(reportId: string, isFavorite: boolean): Promise<void> {
-  const { error } = await admin()
-    .from('reports')
-    .update({ is_favorite: isFavorite, updated_at: new Date().toISOString() } as never)
-    .eq('id', reportId);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.reports SET is_favorite = $1, updated_at = NOW() WHERE id = $2',
+    [isFavorite, reportId]
+  );
 }
 
 export async function updateReportPdfPath(reportId: string, pdfStoragePath: string): Promise<void> {
-  const { error } = await admin()
-    .from('reports')
-    .update({
-      pdf_storage_path: pdfStoragePath,
-      updated_at: new Date().toISOString(),
-    } as never)
-    .eq('id', reportId);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.reports SET pdf_storage_path = $1, updated_at = NOW() WHERE id = $2',
+    [pdfStoragePath, reportId]
+  );
 }
 
 export async function getReportPdfPath(reportId: string): Promise<string | null> {
-  const { data, error } = await admin()
-    .from('reports')
-    .select('pdf_storage_path')
-    .eq('id', reportId)
-    .single();
-
-  if (error || !data) return null;
-  return (data as Record<string, unknown>).pdf_storage_path as string | null;
+  const row = await queryOne<{ pdf_storage_path: string | null }>(
+    'SELECT pdf_storage_path FROM public.reports WHERE id = $1',
+    [reportId]
+  );
+  return row?.pdf_storage_path ?? null;
 }
 
 export async function createShareLink(
@@ -244,29 +240,16 @@ export async function createShareLink(
   userId: string,
   expiresAt: string
 ): Promise<ReportShare> {
-  const { data, error } = await admin()
-    .from('report_shares')
-    .insert({
-      report_id: reportId,
-      created_by: userId,
-      expires_at: expiresAt,
-    } as never)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return data as ReportShare;
+  const rows = await query<ReportShare>(
+    `INSERT INTO public.report_shares (report_id, created_by, expires_at)
+     VALUES ($1, $2, $3) RETURNING *`,
+    [reportId, userId, expiresAt]
+  );
+  return rows[0];
 }
 
 export async function getShareLink(token: string): Promise<ReportShare | null> {
-  const { data, error } = await admin()
-    .from('report_shares')
-    .select('*')
-    .eq('token', token)
-    .single();
-
-  if (error) return null;
-  return data as ReportShare;
+  return queryOne<ReportShare>('SELECT * FROM public.report_shares WHERE token = $1', [token]);
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -280,44 +263,23 @@ export interface DashboardStats {
 }
 
 export async function getDashboardStats(userId: string): Promise<DashboardStats> {
-  const [analyses, reports] = await Promise.all([
-    admin().from('analyses').select('*', { count: 'exact', head: true }).eq('user_id', userId),
-    admin()
-      .from('reports')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .is('deleted_at', null),
+  const [analyses, highRisk, avgScore, reports, recent] = await Promise.all([
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.analyses WHERE user_id = $1', [userId]),
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.analyses WHERE user_id = $1 AND risk_level = $2', [userId, 'HIGH']),
+    query<{ overall_score: number }>('SELECT overall_score FROM public.analyses WHERE user_id = $1 AND status = $2', [userId, 'completed']),
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.reports WHERE user_id = $1 AND deleted_at IS NULL', [userId]),
+    query<Report>('SELECT * FROM public.reports WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 5', [userId]),
   ]);
 
-  const highRisk = await admin()
-    .from('analyses')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .eq('risk_level', 'HIGH');
-
-  const avgScore = await admin()
-    .from('analyses')
-    .select('overall_score')
-    .eq('user_id', userId)
-    .eq('status', 'completed');
-
-  const recent = await admin()
-    .from('reports')
-    .select('*')
-    .eq('user_id', userId)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(5);
-
-  const scores = ((avgScore.data || []) as { overall_score: number }[]).map(r => r.overall_score);
+  const scores = avgScore.map(r => r.overall_score);
   const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 
   return {
-    total_analyses: analyses.count || 0,
+    total_analyses: parseInt(analyses?.count || '0', 10),
     avg_risk_score: avg,
-    high_risk_docs: highRisk.count || 0,
-    reports_saved: reports.count || 0,
-    recent_reports: (recent.data || []) as Report[],
+    high_risk_docs: parseInt(highRisk?.count || '0', 10),
+    reports_saved: parseInt(reports?.count || '0', 10),
+    recent_reports: recent,
   };
 }
 
@@ -339,9 +301,13 @@ export interface AdminStats {
 }
 
 export async function getAdminStats(): Promise<AdminStats> {
-  const { data, error } = await admin().rpc('get_admin_stats');
-  if (error) throw error;
-  return data as unknown as AdminStats;
+  const row = await queryOne<{ get_admin_stats: string }>(
+    'SELECT public.get_admin_stats() as get_admin_stats'
+  );
+  if (!row?.get_admin_stats) {
+    throw new Error('Failed to get admin stats');
+  }
+  return JSON.parse(row.get_admin_stats) as AdminStats;
 }
 
 // ─── Notifications ───────────────────────────────────────────────────────────
@@ -353,38 +319,29 @@ export async function createNotification(
   body?: string,
   data?: Record<string, unknown>
 ): Promise<Notification> {
-  const { data: notification, error } = await admin()
-    .from('notifications')
-    .insert({ user_id: userId, type, title, body: body || null, data: data || null } as never)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return notification as Notification;
+  const rows = await query<Notification>(
+    `INSERT INTO public.notifications (user_id, type, title, body, data)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [userId, type, title, body || null, data || null]
+  );
+  return rows[0];
 }
 
 export async function getUserNotifications(
   userId: string,
   limit = 20
 ): Promise<Notification[]> {
-  const { data, error } = await admin()
-    .from('notifications')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  if (error) throw error;
-  return (data || []) as Notification[];
+  return query<Notification>(
+    'SELECT * FROM public.notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [userId, limit]
+  );
 }
 
 export async function markNotificationRead(notificationId: string): Promise<void> {
-  const { error } = await admin()
-    .from('notifications')
-    .update({ is_read: true } as never)
-    .eq('id', notificationId);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.notifications SET is_read = TRUE WHERE id = $1',
+    [notificationId]
+  );
 }
 
 // ─── Activity Logging ────────────────────────────────────────────────────────
@@ -396,17 +353,11 @@ export async function logActivity(
   resourceId?: string,
   details?: Record<string, unknown>
 ): Promise<void> {
-  const { error } = await admin()
-    .from('activity_logs')
-    .insert({
-      user_id: userId,
-      action,
-      resource: resource || null,
-      resource_id: resourceId || null,
-      details: details || null,
-    } as never);
-
-  if (error) throw error;
+  await execute(
+    `INSERT INTO public.activity_logs (user_id, action, resource, resource_id, details)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId, action, resource || null, resourceId || null, details ? JSON.stringify(details) : null]
+  );
 }
 
 // ─── AI Usage Logging ────────────────────────────────────────────────────────
@@ -421,130 +372,74 @@ export async function logAiUsage(
   success: boolean,
   error?: string
 ): Promise<void> {
-  const { error: err } = await admin()
-    .from('ai_usage_logs')
-    .insert({
-      user_id: userId,
-      provider,
-      model,
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      duration_ms: durationMs,
-      success,
-      error_message: error || null,
-    } as never);
-
-  if (err) throw err;
+  await execute(
+    `INSERT INTO public.ai_usage_logs (user_id, provider, model, tokens_in, tokens_out, duration_ms, success, error_message)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [userId, provider, model, tokensIn, tokensOut, durationMs, success, error || null]
+  );
 }
 
 // ─── Subscriptions ───────────────────────────────────────────────────────────
 
 export async function getSubscriptions(): Promise<Subscription[]> {
-  const { data, error } = await admin()
-    .from('subscriptions')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-  return (data || []) as Subscription[];
+  return query<Subscription>(
+    'SELECT * FROM public.subscriptions ORDER BY created_at DESC'
+  );
 }
 
 export async function getUserSubscription(userId: string): Promise<Subscription | null> {
-  const { data, error } = await admin()
-    .from('subscriptions')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
-
-  if (error && error.code !== 'PGRST116') throw error;
-  return data as Subscription | null;
+  return queryOne<Subscription>(
+    'SELECT * FROM public.subscriptions WHERE user_id = $1',
+    [userId]
+  );
 }
 
 // ─── 2FA ─────────────────────────────────────────────────────────────────────
 
 export async function getTwoFactorStatus(userId: string): Promise<Pick<TwoFactor, 'enabled' | 'created_at'> | null> {
-  const { data, error } = await admin()
-    .from('two_factor')
-    .select('enabled, created_at')
-    .eq('user_id', userId)
-    .single();
-
-  if (error && error.code !== 'PGRST116') throw error;
-  return data as Pick<TwoFactor, 'enabled' | 'created_at'> | null;
+  return queryOne<Pick<TwoFactor, 'enabled' | 'created_at'>>(
+    'SELECT enabled, created_at FROM public.two_factor WHERE user_id = $1',
+    [userId]
+  );
 }
 
 export async function getTwoFactorSecret(userId: string): Promise<string | null> {
-  const { data, error } = await admin()
-    .from('two_factor')
-    .select('secret')
-    .eq('user_id', userId)
-    .single();
-
-  if (error && error.code !== 'PGRST116') throw error;
-  return (data as { secret: string | null } | null)?.secret ?? null;
+  const row = await queryOne<{ secret: string | null }>(
+    'SELECT secret FROM public.two_factor WHERE user_id = $1',
+    [userId]
+  );
+  return row?.secret ?? null;
 }
 
-export async function upsertTwoFactorSecret(
-  userId: string,
-  secret: string
-): Promise<void> {
-  const existing = await admin()
-    .from('two_factor')
-    .select('id')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (existing.data?.id) {
-    const { error } = await admin()
-      .from('two_factor')
-      .update({ secret, enabled: false } as never)
-      .eq('user_id', userId);
-
-    if (error) throw error;
-  } else {
-    const { error } = await admin()
-      .from('two_factor')
-      .insert({ user_id: userId, secret, enabled: false } as never);
-
-    if (error) throw error;
-  }
+export async function upsertTwoFactorSecret(userId: string, secret: string): Promise<void> {
+  await execute(
+    `INSERT INTO public.two_factor (user_id, secret, enabled)
+     VALUES ($1, $2, FALSE)
+     ON CONFLICT (user_id)
+     DO UPDATE SET secret = $2, enabled = FALSE`,
+    [userId, secret]
+  );
 }
 
-export async function enableTwoFactor(
-  userId: string,
-  backupCodes: string[]
-): Promise<void> {
-  const { error } = await admin()
-    .from('two_factor')
-    .update({
-      enabled: true,
-      backup_codes: backupCodes,
-    } as never)
-    .eq('user_id', userId);
-
-  if (error) throw error;
+export async function enableTwoFactor(userId: string, backupCodes: string[]): Promise<void> {
+  await execute(
+    'UPDATE public.two_factor SET enabled = TRUE, backup_codes = $1 WHERE user_id = $2',
+    [backupCodes, userId]
+  );
 }
 
 export async function disableTwoFactor(userId: string): Promise<void> {
-  const { error } = await admin()
-    .from('two_factor')
-    .update({
-      secret: null,
-      enabled: false,
-      backup_codes: null,
-    } as never)
-    .eq('user_id', userId);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.two_factor SET secret = NULL, enabled = FALSE, backup_codes = NULL WHERE user_id = $1',
+    [userId]
+  );
 }
 
 export async function clearTwoFactorSecret(userId: string): Promise<void> {
-  const { error } = await admin()
-    .from('two_factor')
-    .update({ secret: null } as never)
-    .eq('user_id', userId);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.two_factor SET secret = NULL WHERE user_id = $1',
+    [userId]
+  );
 }
 
 export async function createTwoFactorChallenge(
@@ -553,60 +448,38 @@ export async function createTwoFactorChallenge(
   accessToken: string,
   refreshToken: string
 ): Promise<void> {
-  const { error } = await admin()
-    .from('two_factor_challenges')
-    .insert({
-      user_id: userId,
-      challenge_token: challengeToken,
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-    } as never);
-
-  if (error) throw error;
+  await execute(
+    `INSERT INTO public.two_factor_challenges (user_id, challenge_token, access_token, refresh_token, expires_at)
+     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '5 minutes')`,
+    [userId, challengeToken, accessToken, refreshToken]
+  );
 }
 
-export async function getTwoFactorChallenge(
-  challengeToken: string
-): Promise<TwoFactorChallenge | null> {
-  const { data, error } = await admin()
-    .from('two_factor_challenges')
-    .select('*')
-    .eq('challenge_token', challengeToken)
-    .single();
-
-  if (error && error.code !== 'PGRST116') throw error;
-  return data as TwoFactorChallenge | null;
+export async function getTwoFactorChallenge(challengeToken: string): Promise<TwoFactorChallenge | null> {
+  return queryOne<TwoFactorChallenge>(
+    'SELECT * FROM public.two_factor_challenges WHERE challenge_token = $1',
+    [challengeToken]
+  );
 }
 
 export async function markChallengeUsed(challengeToken: string): Promise<void> {
-  const { error } = await admin()
-    .from('two_factor_challenges')
-    .update({ used: true } as never)
-    .eq('challenge_token', challengeToken);
-
-  if (error) throw error;
+  await execute(
+    'UPDATE public.two_factor_challenges SET used = TRUE WHERE challenge_token = $1',
+    [challengeToken]
+  );
 }
 
 export async function getBackupCodes(userId: string): Promise<string[] | null> {
-  const { data, error } = await admin()
-    .from('two_factor')
-    .select('backup_codes')
-    .eq('user_id', userId)
-    .single();
-
-  if (error && error.code !== 'PGRST116') throw error;
-  return (data as { backup_codes: string[] | null } | null)?.backup_codes ?? null;
+  const row = await queryOne<{ backup_codes: string[] | null }>(
+    'SELECT backup_codes FROM public.two_factor WHERE user_id = $1',
+    [userId]
+  );
+  return row?.backup_codes ?? null;
 }
 
-export async function updateBackupCodes(
-  userId: string,
-  backupCodes: string[]
-): Promise<void> {
-  const { error } = await admin()
-    .from('two_factor')
-    .update({ backup_codes: backupCodes } as never)
-    .eq('user_id', userId);
-
-  if (error) throw error;
+export async function updateBackupCodes(userId: string, backupCodes: string[]): Promise<void> {
+  await execute(
+    'UPDATE public.two_factor SET backup_codes = $1 WHERE user_id = $2',
+    [backupCodes, userId]
+  );
 }

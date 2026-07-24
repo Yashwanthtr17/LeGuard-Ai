@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query } from '@/lib/db-pool';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,23 +9,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const supabase = getSupabaseAdmin();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [
-      documentsRaw,
-      analysesRaw,
-      profilesRaw,
-      riskResult,
-      countriesResult,
-      typesResult,
-    ] = await Promise.all([
-      supabase.from('documents').select('created_at').gte('created_at', thirtyDaysAgo),
-      supabase.from('analyses').select('created_at').gte('created_at', thirtyDaysAgo),
-      supabase.from('profiles').select('created_at').gte('created_at', thirtyDaysAgo),
-      supabase.from('analyses').select('risk_level').eq('status', 'completed'),
-      supabase.from('analyses').select('country_applied'),
-      supabase.from('reports').select('document_type'),
+    const [documentsRaw, analysesRaw, profilesRaw, riskResult, countriesResult, typesResult] = await Promise.all([
+      query<{ created_at: string }>('SELECT created_at FROM public.documents WHERE created_at >= $1', [thirtyDaysAgo]),
+      query<{ created_at: string }>('SELECT created_at FROM public.analyses WHERE created_at >= $1', [thirtyDaysAgo]),
+      query<{ created_at: string }>('SELECT created_at FROM public.profiles WHERE created_at >= $1', [thirtyDaysAgo]),
+      query<{ risk_level: string | null }>('SELECT risk_level FROM public.analyses WHERE status = $1', ['completed']),
+      query<{ country_applied: string | null }>('SELECT country_applied FROM public.analyses'),
+      query<{ document_type: string | null }>('SELECT document_type FROM public.reports'),
     ]);
 
     const dayBuckets = (rows: { created_at: string }[]) => {
@@ -40,24 +33,24 @@ export async function GET(req: NextRequest) {
       return Array.from(map.entries()).map(([date, count]) => ({ date, count }));
     };
 
-    const documentsOverTime = dayBuckets((documentsRaw.data || []) as { created_at: string }[]);
-    const analysesOverTime = dayBuckets((analysesRaw.data || []) as { created_at: string }[]);
-    const registrationsOverTime = dayBuckets((profilesRaw.data || []) as { created_at: string }[]);
+    const documentsOverTime = dayBuckets(documentsRaw);
+    const analysesOverTime = dayBuckets(analysesRaw);
+    const registrationsOverTime = dayBuckets(profilesRaw);
 
     const riskDistribution: Record<string, number> = {};
-    ((riskResult.data || []) as { risk_level: string | null }[]).forEach(r => {
+    riskResult.forEach(r => {
       const level = r.risk_level || 'UNKNOWN';
       riskDistribution[level] = (riskDistribution[level] || 0) + 1;
     });
 
     const topCountries: Record<string, number> = {};
-    ((countriesResult.data || []) as { country_applied: string | null }[]).forEach(r => {
+    countriesResult.forEach(r => {
       const country = r.country_applied || 'Unknown';
       topCountries[country] = (topCountries[country] || 0) + 1;
     });
 
     const documentTypes: Record<string, number> = {};
-    ((typesResult.data || []) as { document_type: string | null }[]).forEach(r => {
+    typesResult.forEach(r => {
       const type = r.document_type || 'Other';
       documentTypes[type] = (documentTypes[type] || 0) + 1;
     });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/supabase';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { execute } from '@/lib/db-pool';
 import { getUserSubscription } from '@/lib/services/database';
 
 
@@ -39,29 +39,18 @@ export async function POST(req: NextRequest) {
 
     const existing = await getUserSubscription(user.id);
 
+    const now = new Date().toISOString();
+
     if (existing) {
-      const { error } = await getSupabaseAdmin()
-        .from('subscriptions')
-        .update({
-          plan,
-          status: 'active',
-          current_period_start: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as never)
-        .eq('id', existing.id);
-
-      if (error) throw error;
+      await execute(
+        'UPDATE public.subscriptions SET plan = $1, status = $2, current_period_start = $3, updated_at = $4 WHERE id = $5',
+        [plan, 'active', now, now, existing.id]
+      );
     } else {
-      const { error } = await getSupabaseAdmin()
-        .from('subscriptions')
-        .insert({
-          user_id: user.id,
-          plan,
-          status: 'active',
-          current_period_start: new Date().toISOString(),
-        } as never);
-
-      if (error) throw error;
+      await execute(
+        'INSERT INTO public.subscriptions (user_id, plan, status, current_period_start) VALUES ($1, $2, $3, $4)',
+        [user.id, plan, 'active', now]
+      );
     }
 
     const subscription = await getUserSubscription(user.id);

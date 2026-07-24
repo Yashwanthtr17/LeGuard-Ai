@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { queryOne } from '@/lib/db-pool';
 import { getReport, logActivity } from '@/lib/services/database';
 import { getReportPdfUrl, getReportPdfBuffer } from '@/lib/services/storage';
 
@@ -41,14 +42,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // On-the-fly generation fallback (matching existing behavior)
     const analysis = report.analysis as Record<string, unknown> | undefined;
 
-    const supabase = getSupabaseAdmin();
-    const { data: doc } = await supabase
-      .from('documents')
-      .select('original_name')
-      .eq('id', report.document_id as string)
-      .single();
+    const doc = await queryOne<{ original_name: string }>(
+      'SELECT original_name FROM public.documents WHERE id = $1',
+      [report.document_id as string]
+    );
 
-    const documentName = (doc as Record<string, unknown> | undefined)?.original_name as string || report.title as string || 'Untitled';
+    const documentName = doc?.original_name || (report.title as string) || 'Untitled';
 
     const { jsPDF } = await import('jspdf');
 

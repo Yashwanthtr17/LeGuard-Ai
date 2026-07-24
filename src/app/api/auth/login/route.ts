@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { getSupabaseAuth, getSupabaseAdmin } from '@/lib/supabase';
+import { signInWithPassword } from '@/lib/supabase';
 import { loginSchema } from '@/lib/schemas';
 import { logActivity } from '@/lib/db';
 import { createTwoFactorChallenge } from '@/lib/services/database';
+import { query } from '@/lib/db-pool';
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,10 +18,7 @@ export async function POST(req: NextRequest) {
 
     const { email, password, remember_me } = parsed.data;
 
-    const { data, error } = await getSupabaseAuth().auth.signInWithPassword({
-      email: email.toLowerCase(),
-      password,
-    });
+    const { data, error } = await signInWithPassword(email.toLowerCase(), password);
 
     if (error) {
       return NextResponse.json({ error: true, message: 'Invalid email or password.' }, { status: 401 });
@@ -29,12 +27,8 @@ export async function POST(req: NextRequest) {
     const session = data.session;
     const user = data.user;
 
-    const admin = getSupabaseAdmin();
-    const { data: twoFactor } = await admin
-      .from('two_factor')
-      .select('enabled')
-      .eq('user_id', user!.id)
-      .single();
+    const twoFactorRows = await query<{ enabled: boolean }>('SELECT enabled FROM public.two_factor WHERE user_id = $1', [user!.id]);
+    const twoFactor = twoFactorRows[0];
 
     if (twoFactor?.enabled) {
       const challengeToken = crypto.randomUUID();

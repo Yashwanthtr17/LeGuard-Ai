@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query, queryOne } from '@/lib/db-pool';
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,20 +14,18 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '20');
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await getSupabaseAdmin()
-      .from('payments')
-      .select('*', { count: 'exact' })
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const [payments, countResult] = await Promise.all([
+      query('SELECT * FROM public.payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3', [user.id, limit, offset]),
+      queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.payments WHERE user_id = $1', [user.id]),
+    ]);
 
-    if (error) throw error;
+    const total = parseInt(countResult?.count || '0', 10);
 
     return NextResponse.json({
-      payments: data || [],
-      total: count || 0,
+      payments: payments || [],
+      total,
       page,
-      total_pages: Math.ceil((count || 0) / limit),
+      total_pages: Math.ceil(total / limit),
     });
   } catch (err) {
     console.error('[payments:get] Error:', err);

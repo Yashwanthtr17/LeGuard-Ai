@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { queryOne, execute } from '@/lib/db-pool';
 import { getReport, updateReportPdfPath, logActivity } from '@/lib/services/database';
 import { uploadReportPdf } from '@/lib/services/storage';
 import { renderReportHtml, type TemplateData } from '@/lib/report-template';
@@ -37,15 +38,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: true, message: 'No analysis data found for this report.' }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
+    const doc = await queryOne<{ original_name: string }>(
+      'SELECT original_name FROM public.documents WHERE id = $1',
+      [report.document_id as string]
+    );
 
-    const { data: doc } = await supabase
-      .from('documents')
-      .select('original_name')
-      .eq('id', report.document_id as string)
-      .single();
-
-    const documentName = (doc as Record<string, unknown> | undefined)?.original_name as string || report.title as string || 'Untitled';
+    const documentName = doc?.original_name || (report.title as string) || 'Untitled';
 
     const clauses = (analysis.clauses as Record<string, unknown>[]) || [];
     const clausesByType: Record<string, Record<string, unknown>[]> = {};
@@ -267,14 +265,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     await updateReportPdfPath(id, storagePath);
 
-    await supabase
-      .from('reports')
-      .update({
-        generation_status: 'completed',
-        generated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as never)
-      .eq('id', id);
+    await execute(
+      'UPDATE public.reports SET generation_status = $1, generated_at = $2, updated_at = $2 WHERE id = $3',
+      ['completed', new Date().toISOString(), id]
+    );
 
     logActivity(user.id, 'report_generate', 'reports', id, {
       method: generationMethod,
@@ -293,15 +287,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     try {
       const { id } = await params;
-      const supabase = getSupabaseAdmin();
-      await supabase
-        .from('reports')
-        .update({
-          generation_status: 'failed',
-          generation_error: message,
-          updated_at: new Date().toISOString(),
-        } as never)
-        .eq('id', id);
+      await execute(
+        'UPDATE public.reports SET generation_status = $1, generation_error = $2, updated_at = $3 WHERE id = $4',
+        ['failed', message, new Date().toISOString(), id]
+      );
     } catch { }
 
     return NextResponse.json({ error: true, message }, { status: 500 });

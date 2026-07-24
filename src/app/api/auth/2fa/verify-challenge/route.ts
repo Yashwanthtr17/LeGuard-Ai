@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verify } from 'otplib';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { queryOne } from '@/lib/db-pool';
 import {
   getTwoFactorChallenge,
   getTwoFactorSecret,
@@ -39,13 +39,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Invalid verification code.' }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: userData, error: userError } = await supabase.auth.admin.getUserById(challenge.user_id);
-    if (userError || !userData?.user) {
+    const user = await queryOne<{ id: string; email: string; full_name: string }>(
+      'SELECT id, email, full_name FROM public.users WHERE id = $1',
+      [challenge.user_id]
+    );
+    if (!user) {
       return NextResponse.json({ error: true, message: 'User not found.' }, { status: 404 });
     }
 
-    const meta = userData.user.user_metadata ?? {};
+    const meta = { full_name: user.full_name };
 
     await markChallengeUsed(challenge_token);
 
@@ -54,7 +56,7 @@ export async function POST(req: NextRequest) {
       refresh_token: challenge.refresh_token,
       user: {
         id: challenge.user_id,
-        email: userData.user.email,
+        email: user.email,
         full_name: meta.full_name || '',
         avatar_url: meta.avatar_url || '',
         default_country: meta.default_country || 'United States',

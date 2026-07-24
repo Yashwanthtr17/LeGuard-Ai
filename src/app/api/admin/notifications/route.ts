@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query, execute } from '@/lib/db-pool';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,7 +9,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const supabase = getSupabaseAdmin();
     const body = await req.json();
     const { title, body: messageBody, type } = body;
 
@@ -16,32 +16,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Notification title is required.' }, { status: 400 });
     }
 
-    const { data: profiles, error: profileError } = await supabase
-      .from('profiles')
-      .select('id');
+    const profiles = await query<{ id: string }>('SELECT id FROM public.profiles');
 
-    if (profileError) throw profileError;
-
-    const userIds = ((profiles || []) as { id: string }[]).map(p => p.id);
+    const userIds = profiles.map(p => p.id);
 
     if (userIds.length === 0) {
       return NextResponse.json({ error: true, message: 'No users to notify.' }, { status: 404 });
     }
 
-    const notifications = userIds.map(uid => ({
-      user_id: uid,
-      type: type || 'system',
-      title: title.trim(),
-      body: messageBody || null,
-      data: { created_by: user.id },
-      is_read: false,
-    }));
+    const notificationType = type || 'system';
+    const notificationTitle = title.trim();
+    const notificationBody = messageBody || null;
+    const notificationData = JSON.stringify({ created_by: user.id });
 
-    const { error: insertError } = await supabase
-      .from('notifications')
-      .insert(notifications as never);
-
-    if (insertError) throw insertError;
+    await execute(
+      `INSERT INTO public.notifications (user_id, type, title, body, data, is_read)
+       SELECT unnest($1::uuid[]), $2, $3, $4, $5::jsonb, FALSE`,
+      [userIds, notificationType, notificationTitle, notificationBody, notificationData]
+    );
 
     return NextResponse.json({
       success: true,

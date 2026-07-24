@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { execute } from '@/lib/db-pool';
 import { getDocument, logActivity } from '@/lib/services/database';
 import { deleteDocument as deleteStorageDocument } from '@/lib/services/storage';
 
@@ -52,13 +53,10 @@ export async function DELETE(
       return NextResponse.json({ error: true, message: 'Unauthorized.' }, { status: 403 });
     }
 
-    const admin = getSupabaseAdmin();
-    const { error } = await admin
-      .from('documents')
-      .update({ status: 'deleted', updated_at: new Date().toISOString() })
-      .eq('id', id);
-
-    if (error) throw error;
+    await execute(
+      'UPDATE public.documents SET status = $1, updated_at = $2 WHERE id = $3',
+      ['deleted', new Date().toISOString(), id]
+    );
 
     if (document.storage_path) {
       await deleteStorageDocument(document.storage_path).catch(() => {});

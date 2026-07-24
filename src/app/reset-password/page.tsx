@@ -1,36 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createSupabaseBrowserClient } from "@/lib/supabase";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [ready, setReady] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
+    const t = searchParams.get("token");
+    if (t) {
+      setToken(t);
+      setReady(true);
+    }
+    setChecking(false);
+  }, [searchParams]);
 
-    supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setReady(true);
-        setChecking(false);
-      }
-    });
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setReady(true);
-      }
-      setChecking(false);
-    });
-  }, []);
+  const [ready, setReady] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -50,11 +43,16 @@ export default function ResetPasswordPage() {
     setSubmitting(true);
 
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { error: updateError } = await supabase.auth.updateUser({ password });
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
+      });
 
-      if (updateError) {
-        setError(updateError.message);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.message || "Failed to reset password.");
       } else {
         setMessage("Password updated successfully! Redirecting to login...");
         setTimeout(() => router.push("/login"), 2000);
@@ -78,7 +76,7 @@ export default function ResetPasswordPage() {
               <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4" />
               <p className="text-slate-500">Verifying your reset link...</p>
             </div>
-          ) : !ready ? (
+          ) : !token ? (
             <div className="text-center py-8">
               <p className="text-danger text-sm mb-4">Invalid or expired reset link.</p>
               <button

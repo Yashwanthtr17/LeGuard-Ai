@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { execute, transaction } from '@/lib/db-pool';
 
 export async function DELETE(req: NextRequest) {
   try {
@@ -7,8 +8,6 @@ export async function DELETE(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
-
-    const admin = getSupabaseAdmin();
 
     const tables = [
       'feedback',
@@ -29,24 +28,21 @@ export async function DELETE(req: NextRequest) {
       'ai_usage_logs',
       'two_factor',
       'profiles',
+      'users',
     ];
 
-    for (const table of tables) {
-      const { error } = await admin
-        .from(table as never)
-        .delete()
-        .eq('user_id', user.id);
-
-      if (error && error.code !== 'PGRST116') {
-        console.warn(`[delete] Failed to clear ${table}:`, error);
+    await transaction(async (client) => {
+      for (const table of tables) {
+        try {
+          await client.query(`DELETE FROM public.${table} WHERE user_id = $1`, [user.id]);
+        } catch (err: unknown) {
+          const pgErr = err as { code?: string; message?: string };
+          if (pgErr.code !== 'PGRST116' && pgErr.code !== '42P01') {
+            console.warn(`[delete] Failed to clear ${table}:`, pgErr.message);
+          }
+        }
       }
-    }
-
-    const { error: authDeleteError } = await admin.auth.admin.deleteUser(user.id);
-    if (authDeleteError) {
-      console.error('[delete] Failed to delete auth user:', authDeleteError);
-      return NextResponse.json({ error: true, message: 'Failed to delete account.' }, { status: 500 });
-    }
+    });
 
     return NextResponse.json({ success: true, message: 'Account and all associated data have been deleted.' });
   } catch (err) {

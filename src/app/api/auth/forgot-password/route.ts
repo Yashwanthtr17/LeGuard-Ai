@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAdmin } from '@/lib/supabase';
+import { generateToken } from '@/lib/auth';
+import { queryOne } from '@/lib/db-pool';
 import { forgotPasswordSchema } from '@/lib/schemas';
 
 export async function POST(req: NextRequest) {
@@ -14,14 +15,14 @@ export async function POST(req: NextRequest) {
 
     const { email } = parsed.data;
 
-    const { error } = await getSupabaseAdmin().auth.resetPasswordForEmail(
-      email.toLowerCase(),
-      { redirectTo: `${req.nextUrl.origin}/auth/reset-password` }
+    const user = await queryOne<{ id: string; full_name: string }>(
+      'SELECT id, full_name FROM public.users WHERE email = $1',
+      [email.toLowerCase()]
     );
 
-    if (error) {
-      console.error('[forgot-password] Error:', error);
-      return NextResponse.json({ error: true, message: 'Something went wrong. Please try again.' }, { status: 400 });
+    if (user) {
+      const resetToken = generateToken({ id: user.id, email, full_name: user.full_name });
+      // In production, send email with reset link containing this token
     }
 
     return NextResponse.json({

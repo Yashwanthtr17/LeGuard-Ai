@@ -1,14 +1,15 @@
--- LeGuard-AI Database Schema
--- Run this in Supabase SQL Editor
+-- LeGuard-AI Database Schema (Standalone Postgres - no Supabase dependency)
+-- Run this directly on your Postgres instance
 
--- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
--- PROFILES (extends Supabase auth.users)
+-- USERS (replaces Supabase auth.users)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS public.profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS public.users (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
   full_name TEXT NOT NULL DEFAULT '',
   avatar_url TEXT,
   default_country TEXT DEFAULT 'United States',
@@ -22,29 +23,52 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_profiles_email ON public.profiles USING hash(id);
+CREATE INDEX idx_users_email ON public.users(email);
+
+-- ============================================================
+-- PROFILES (kept for compatibility, merge with users)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT,
+  default_country TEXT DEFAULT 'United States',
+  risk_sensitivity TEXT DEFAULT 'standard' CHECK (risk_sensitivity IN ('standard', 'strict', 'lenient')),
+  language TEXT DEFAULT 'en',
+  theme TEXT DEFAULT 'light' CHECK (theme IN ('light', 'dark', 'system')),
+  onboarding_complete BOOLEAN DEFAULT FALSE,
+  email_notifications BOOLEAN DEFAULT TRUE,
+  marketing_emails BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_profiles_id ON public.profiles USING hash(id);
 
 -- ============================================================
 -- SESSIONS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.sessions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
   device TEXT,
   ip_address TEXT,
   user_agent TEXT,
   last_active_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_sessions_user ON public.sessions(user_id);
+CREATE INDEX idx_sessions_token ON public.sessions(token_hash);
 
 -- ============================================================
 -- TWO-FACTOR AUTH
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.two_factor (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   secret TEXT,
   enabled BOOLEAN DEFAULT FALSE,
   backup_codes TEXT[],
@@ -54,7 +78,7 @@ CREATE TABLE IF NOT EXISTS public.two_factor (
 
 CREATE TABLE IF NOT EXISTS public.two_factor_challenges (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   challenge_token TEXT NOT NULL UNIQUE,
   access_token TEXT NOT NULL,
   refresh_token TEXT NOT NULL,
@@ -71,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_2fa_challenges_user ON public.two_factor_challeng
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.documents (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   original_name TEXT NOT NULL,
   file_type TEXT NOT NULL,
   file_size BIGINT NOT NULL,
@@ -95,7 +119,7 @@ CREATE INDEX idx_documents_created ON public.documents(created_at DESC);
 CREATE TABLE IF NOT EXISTS public.analyses (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   document_id UUID NOT NULL REFERENCES public.documents(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
   ai_provider TEXT,
   model_used TEXT,
@@ -128,21 +152,26 @@ CREATE INDEX idx_analyses_score ON public.analyses(overall_score);
 CREATE TABLE IF NOT EXISTS public.reports (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   analysis_id UUID NOT NULL REFERENCES public.analyses(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   document_id UUID NOT NULL REFERENCES public.documents(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   pdf_url TEXT,
+  pdf_storage_path TEXT,
+  generation_status TEXT DEFAULT NULL CHECK (generation_status IN ('pending', 'generating', 'completed', 'failed', NULL)),
+  generation_error TEXT,
   is_favorite BOOLEAN DEFAULT FALSE,
   is_archived BOOLEAN DEFAULT FALSE,
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  generated_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_reports_user ON public.reports(user_id);
 CREATE INDEX idx_reports_favorite ON public.reports(user_id, is_favorite);
 CREATE INDEX idx_reports_deleted ON public.reports(deleted_at);
 CREATE INDEX idx_reports_created ON public.reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_generation ON public.reports(generation_status);
 
 -- ============================================================
 -- CLAUSES
@@ -178,7 +207,7 @@ CREATE TABLE IF NOT EXISTS public.country_compliance (
 CREATE INDEX idx_compliance_analysis ON public.country_compliance(analysis_id);
 
 -- ============================================================
--- RISK ITEMS (financial, legal, privacy, liability, penalties, etc.)
+-- RISK ITEMS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.risk_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -227,7 +256,7 @@ CREATE INDEX idx_obligations_analysis ON public.obligations(analysis_id);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.subscriptions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'single', 'pro')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'cancelled', 'expired', 'trialing')),
   current_period_start TIMESTAMPTZ,
@@ -247,7 +276,7 @@ CREATE INDEX idx_subscriptions_status ON public.subscriptions(status);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.payments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   subscription_id UUID REFERENCES public.subscriptions(id),
   amount REAL NOT NULL,
   currency TEXT DEFAULT 'USD',
@@ -266,7 +295,7 @@ CREATE INDEX idx_payments_created ON public.payments(created_at DESC);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.notifications (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   type TEXT NOT NULL CHECK (type IN (
     'report_ready', 'upload_complete', 'upload_failed',
     'analysis_complete', 'analysis_failed',
@@ -288,7 +317,7 @@ CREATE INDEX idx_notifications_created ON public.notifications(created_at DESC);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.activity_logs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES public.profiles(id),
+  user_id UUID REFERENCES public.users(id),
   action TEXT NOT NULL,
   resource TEXT,
   resource_id TEXT,
@@ -307,7 +336,7 @@ CREATE INDEX idx_activity_created ON public.activity_logs(created_at DESC);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.ai_usage_logs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES public.profiles(id),
+  user_id UUID REFERENCES public.users(id),
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
   tokens_in INTEGER DEFAULT 0,
@@ -324,20 +353,19 @@ CREATE INDEX idx_ai_usage_created ON public.ai_usage_logs(created_at DESC);
 CREATE INDEX idx_ai_usage_provider ON public.ai_usage_logs(provider);
 
 -- ============================================================
--- API USAGE
+-- REPORT SHARES
 -- ============================================================
-CREATE TABLE IF NOT EXISTS public.api_usage (
+CREATE TABLE IF NOT EXISTS public.report_shares (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES public.profiles(id),
-  endpoint TEXT NOT NULL,
-  method TEXT,
-  status_code INTEGER,
-  duration_ms INTEGER,
+  report_id UUID NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(24), 'hex'),
+  created_by UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_api_usage_user ON public.api_usage(user_id);
-CREATE INDEX idx_api_usage_created ON public.api_usage(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_shares_token ON public.report_shares(token);
+CREATE INDEX IF NOT EXISTS idx_report_shares_report ON public.report_shares(report_id);
 
 -- ============================================================
 -- COUNTRY LAWS
@@ -363,12 +391,12 @@ CREATE INDEX idx_country_laws_country ON public.country_laws(country);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.support_tickets (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   subject TEXT NOT NULL,
   message TEXT NOT NULL,
   status TEXT DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'closed')),
   priority TEXT DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
-  assigned_to UUID REFERENCES public.profiles(id),
+  assigned_to UUID REFERENCES public.users(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -381,7 +409,7 @@ CREATE INDEX idx_tickets_status ON public.support_tickets(status);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.feedback (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   rating INTEGER CHECK (rating >= 1 AND rating <= 5),
   message TEXT,
   category TEXT,
@@ -389,7 +417,7 @@ CREATE TABLE IF NOT EXISTS public.feedback (
 );
 
 -- ============================================================
--- AUTO-CREATE PROFILE ON USER SIGNUP
+-- AUTO-CREATE PROFILE & SUBSCRIPTION ON USER SIGNUP
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
@@ -400,9 +428,9 @@ BEGIN
   INSERT INTO public.profiles (id, full_name, default_country, language)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email, ''),
-    COALESCE(NEW.raw_user_meta_data->>'default_country', 'United States'),
-    COALESCE(NEW.raw_user_meta_data->>'language', 'en')
+    COALESCE(NEW.full_name, NEW.email, ''),
+    COALESCE(NEW.default_country, 'United States'),
+    COALESCE(NEW.language, 'en')
   );
 
   INSERT INTO public.subscriptions (user_id, plan, status, current_period_start, current_period_end)
@@ -412,147 +440,14 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
+DROP TRIGGER IF EXISTS on_user_created ON public.users;
+CREATE OR REPLACE TRIGGER on_user_created
+  AFTER INSERT ON public.users
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_new_user();
 
 -- ============================================================
--- ROW LEVEL SECURITY
--- ============================================================
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.analyses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.clauses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.country_compliance ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.risk_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.timeline_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.obligations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.two_factor ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.two_factor_challenges ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.support_tickets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
-
--- Users can read their own profile
-CREATE POLICY "Users can read own profile"
-  ON public.profiles FOR SELECT
-  USING (auth.uid() = id);
-
-CREATE POLICY "Users can update own profile"
-  ON public.profiles FOR UPDATE
-  USING (auth.uid() = id);
-
--- Documents: users can CRUD their own
-CREATE POLICY "Users can CRUD own documents"
-  ON public.documents FOR ALL
-  USING (auth.uid() = user_id);
-
--- Analyses: users can read their own
-CREATE POLICY "Users can read own analyses"
-  ON public.analyses FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can insert own analyses"
-  ON public.analyses FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
-
--- Reports: users can CRUD their own
-CREATE POLICY "Users can CRUD own reports"
-  ON public.reports FOR ALL
-  USING (auth.uid() = user_id);
-
--- Clauses: read via analysis ownership
-CREATE POLICY "Users can read clauses via analysis"
-  ON public.clauses FOR SELECT
-  USING (EXISTS (
-    SELECT 1 FROM public.analyses WHERE id = analysis_id AND user_id = auth.uid()
-  ));
-
--- Country compliance: read via analysis
-CREATE POLICY "Users can read compliance via analysis"
-  ON public.country_compliance FOR SELECT
-  USING (EXISTS (
-    SELECT 1 FROM public.analyses WHERE id = analysis_id AND user_id = auth.uid()
-  ));
-
--- Risk items: read via analysis
-CREATE POLICY "Users can read risk items via analysis"
-  ON public.risk_items FOR SELECT
-  USING (EXISTS (
-    SELECT 1 FROM public.analyses WHERE id = analysis_id AND user_id = auth.uid()
-  ));
-
--- Timeline: read via analysis
-CREATE POLICY "Users can read timeline via analysis"
-  ON public.timeline_events FOR SELECT
-  USING (EXISTS (
-    SELECT 1 FROM public.analyses WHERE id = analysis_id AND user_id = auth.uid()
-  ));
-
--- Obligations: read via analysis
-CREATE POLICY "Users can read obligations via analysis"
-  ON public.obligations FOR SELECT
-  USING (EXISTS (
-    SELECT 1 FROM public.analyses WHERE id = analysis_id AND user_id = auth.uid()
-  ));
-
--- Subscriptions: users can read own
-CREATE POLICY "Users can read own subscription"
-  ON public.subscriptions FOR SELECT
-  USING (auth.uid() = user_id);
-
--- Payments: users can read own
-CREATE POLICY "Users can read own payments"
-  ON public.payments FOR SELECT
-  USING (auth.uid() = user_id);
-
--- Notifications: users can CRUD own
-CREATE POLICY "Users can CRUD own notifications"
-  ON public.notifications FOR ALL
-  USING (auth.uid() = user_id);
-
--- Activity logs: users can read own
-CREATE POLICY "Users can read own activity"
-  ON public.activity_logs FOR SELECT
-  USING (auth.uid() = user_id);
-
--- Sessions: users can CRUD own
-CREATE POLICY "Users can manage own sessions"
-  ON public.sessions FOR ALL
-  USING (auth.uid() = user_id);
-
--- 2FA: users can manage own
-CREATE POLICY "Users can manage own 2FA"
-  ON public.two_factor FOR ALL
-  USING (auth.uid() = user_id);
-
--- 2FA challenges: service role only (created/consumed by API)
-CREATE POLICY "Service role manages challenges"
-  ON public.two_factor_challenges FOR ALL
-  USING (auth.role() = 'service_role');
-
--- Support tickets: users can CRUD own
-CREATE POLICY "Users can manage own tickets"
-  ON public.support_tickets FOR ALL
-  USING (auth.uid() = user_id);
-
--- Feedback: users can insert own
-CREATE POLICY "Users can insert own feedback"
-  ON public.feedback FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can read own feedback"
-  ON public.feedback FOR SELECT
-  USING (auth.uid() = user_id);
-
--- ============================================================
--- ADMIN FUNCTIONS (service_role bypasses RLS)
+-- ADMIN STATS FUNCTION
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.get_admin_stats()
 RETURNS JSONB
@@ -563,13 +458,13 @@ DECLARE
   result JSONB;
 BEGIN
   SELECT JSONB_BUILD_OBJECT(
-    'total_users', (SELECT COUNT(*) FROM public.profiles),
+    'total_users', (SELECT COUNT(*) FROM public.users),
     'total_documents', (SELECT COUNT(*) FROM public.documents),
     'total_analyses', (SELECT COUNT(*) FROM public.analyses),
     'total_reports', (SELECT COUNT(*) FROM public.reports),
     'active_subscriptions', (SELECT COUNT(*) FROM public.subscriptions WHERE status = 'active'),
     'total_revenue', (SELECT COALESCE(SUM(amount), 0) FROM public.payments WHERE status = 'completed'),
-    'today_users', (SELECT COUNT(*) FROM public.profiles WHERE created_at >= CURRENT_DATE),
+    'today_users', (SELECT COUNT(*) FROM public.users WHERE created_at >= CURRENT_DATE),
     'today_analyses', (SELECT COUNT(*) FROM public.analyses WHERE created_at >= CURRENT_DATE),
     'today_uploads', (SELECT COUNT(*) FROM public.documents WHERE created_at >= CURRENT_DATE),
     'storage_used', (SELECT COALESCE(SUM(file_size), 0) FROM public.documents),
@@ -579,29 +474,3 @@ BEGIN
   RETURN result;
 END;
 $$;
-
--- ============================================================
--- MIGRATION: Add PDF generation fields to reports
--- ============================================================
-ALTER TABLE public.reports
-  ADD COLUMN IF NOT EXISTS pdf_storage_path TEXT,
-  ADD COLUMN IF NOT EXISTS generation_status TEXT DEFAULT NULL CHECK (generation_status IN ('pending', 'generating', 'completed', 'failed', NULL)),
-  ADD COLUMN IF NOT EXISTS generation_error TEXT,
-  ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
-
-CREATE INDEX IF NOT EXISTS idx_reports_generation ON public.reports(generation_status);
-
--- ============================================================
--- REPORT SHARES
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.report_shares (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  report_id UUID NOT NULL REFERENCES public.reports(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(24), 'hex'),
-  created_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_report_shares_token ON public.report_shares(token);
-CREATE INDEX IF NOT EXISTS idx_report_shares_report ON public.report_shares(report_id);

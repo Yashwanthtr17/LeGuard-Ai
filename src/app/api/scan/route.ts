@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { query, queryOne, execute } from '@/lib/db-pool';
 import {
   createAnalysis,
   getUserReports,
@@ -67,24 +68,13 @@ export async function POST(req: NextRequest) {
 
     const storagePath = await uploadDocument(buffer, user.id, file.name);
 
-    const admin = getSupabaseAdmin();
-    const { data: document, error: docError } = await admin
-      .from('documents')
-      .insert({
-        user_id: user.id,
-        original_name: file.name,
-        file_type: docType,
-        file_size: file.size,
-        storage_path: storagePath,
-        mime_type: file.type || null,
-        status: 'processing',
-        page_count: parsed.pages,
-        text_content: parsed.text,
-      })
-      .select('id')
-      .single();
+    const document = await queryOne<{ id: string }>(
+      `INSERT INTO public.documents (user_id, original_name, file_type, file_size, storage_path, mime_type, status, page_count, text_content)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      [user.id, file.name, docType, file.size, storagePath, file.type || null, 'processing', parsed.pages, parsed.text]
+    );
 
-    if (docError) throw docError;
+    if (!document) throw new Error('Failed to create document.');
     const documentId = document.id;
 
     const analysisResult = await analyzeDocument(parsed.text, jurisdiction, focusAreas);
@@ -133,8 +123,13 @@ export async function POST(req: NextRequest) {
         sort_order: i,
       }));
 
-      const { error: clauseError } = await admin.from('clauses').insert(clauseInserts as never);
-      if (clauseError) throw clauseError;
+      for (const clause of clauseInserts) {
+        await execute(
+          `INSERT INTO public.clauses (analysis_id, name, risk_score, risk_level, plain_english, why_it_matters, recommendation, location, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [clause.analysis_id, clause.name, clause.risk_score, clause.risk_level, clause.plain_english, clause.why_it_matters, clause.recommendation, clause.location, clause.sort_order]
+        );
+      }
     }
 
     if (analysisResult.country_compliance?.length) {
@@ -145,8 +140,12 @@ export async function POST(req: NextRequest) {
         note: c.note || null,
       }));
 
-      const { error: compError } = await admin.from('country_compliance').insert(complianceInserts as never);
-      if (compError) throw compError;
+      for (const item of complianceInserts) {
+        await execute(
+          'INSERT INTO public.country_compliance (analysis_id, law, status, note) VALUES ($1, $2, $3, $4)',
+          [item.analysis_id, item.law, item.status, item.note]
+        );
+      }
     }
 
     const riskCategories: Record<string, string[]> = {
@@ -179,8 +178,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (riskInserts.length) {
-      const { error: riskError } = await admin.from('risk_items').insert(riskInserts as never);
-      if (riskError) throw riskError;
+      for (const item of riskInserts) {
+        await execute(
+          'INSERT INTO public.risk_items (analysis_id, category, content, sort_order) VALUES ($1, $2, $3, $4)',
+          [item.analysis_id, item.category, item.content, item.sort_order]
+        );
+      }
     }
 
     if (analysisResult.timeline?.length) {
@@ -191,8 +194,12 @@ export async function POST(req: NextRequest) {
         sort_order: i,
       }));
 
-      const { error: tlError } = await admin.from('timeline_events').insert(timelineInserts as never);
-      if (tlError) throw tlError;
+      for (const event of timelineInserts) {
+        await execute(
+          'INSERT INTO public.timeline_events (analysis_id, event, event_date, sort_order) VALUES ($1, $2, $3, $4)',
+          [event.analysis_id, event.event, event.event_date, event.sort_order]
+        );
+      }
     }
 
     if (analysisResult.obligations?.length) {
@@ -203,27 +210,26 @@ export async function POST(req: NextRequest) {
         sort_order: i,
       }));
 
-      const { error: obError } = await admin.from('obligations').insert(obligationInserts as never);
-      if (obError) throw obError;
+      for (const ob of obligationInserts) {
+        await execute(
+          'INSERT INTO public.obligations (analysis_id, party, obligation, sort_order) VALUES ($1, $2, $3, $4)',
+          [ob.analysis_id, ob.party, ob.obligation, ob.sort_order]
+        );
+      }
     }
 
-    const { data: report, error: reportError } = await admin
-      .from('reports')
-      .insert({
-        analysis_id: analysis.id,
-        user_id: user.id,
-        document_id: documentId,
-        title: file.name.replace(/\.[^.]+$/, ''),
-      })
-      .select('id')
-      .single();
+    const report = await queryOne<{ id: string }>(
+      `INSERT INTO public.reports (analysis_id, user_id, document_id, title)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [analysis.id, user.id, documentId, file.name.replace(/\.[^.]+$/, '')]
+    );
 
-    if (reportError) throw reportError;
+    if (!report) throw new Error('Failed to create report.');
 
-    await admin
-      .from('documents')
-      .update({ status: 'completed', updated_at: new Date().toISOString() })
-      .eq('id', documentId);
+    await execute(
+      'UPDATE public.documents SET status = $1, updated_at = $2 WHERE id = $3',
+      ['completed', new Date().toISOString(), documentId]
+    );
 
     await createNotification(
       user.id,

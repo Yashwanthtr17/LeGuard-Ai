@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseAdmin, getSupabaseAuth } from '@/lib/supabase';
+import { getUserByToken, updateUserById, signInWithPassword } from '@/lib/supabase';
 import { updateProfileSchema } from '@/lib/schemas';
 import { getProfile, upsertProfile, logActivity } from '@/lib/db';
 
@@ -9,19 +9,13 @@ function getToken(req: NextRequest): string | null {
   return auth.slice(7);
 }
 
-async function authenticate(token: string) {
-  const { data: { user }, error } = await getSupabaseAdmin().auth.getUser(token);
-  if (error || !user) return null;
-  return user;
-}
-
 export async function GET(req: NextRequest) {
   const token = getToken(req);
   if (!token) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
 
-  const user = await authenticate(token);
+  const { data: { user } } = await getUserByToken(token);
   if (!user) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
@@ -48,7 +42,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
 
-  const user = await authenticate(token);
+  const { data: { user } } = await getUserByToken(token);
   if (!user) {
     return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
   }
@@ -89,7 +83,7 @@ export async function PUT(req: NextRequest) {
     }
 
     if (Object.keys(metadataUpdates).length > 0) {
-      const { error: updateError } = await getSupabaseAdmin().auth.admin.updateUserById(user.id, {
+      const { error: updateError } = await updateUserById(user.id, {
         user_metadata: { ...currentMeta, ...metadataUpdates },
       });
       if (updateError) {
@@ -108,14 +102,11 @@ export async function PUT(req: NextRequest) {
       if (!user.email) {
         return NextResponse.json({ error: true, message: 'User email not found.' }, { status: 400 });
       }
-      const { error: signInError } = await getSupabaseAuth().auth.signInWithPassword({
-        email: user.email,
-        password: current_password,
-      });
+      const { error: signInError } = await signInWithPassword(user.email!, current_password);
       if (signInError) {
         return NextResponse.json({ error: true, message: 'Current password is incorrect.' }, { status: 400 });
       }
-      const { error: pwdError } = await getSupabaseAdmin().auth.admin.updateUserById(user.id, {
+      const { error: pwdError } = await updateUserById(user.id, {
         password: new_password,
       });
       if (pwdError) {
@@ -126,7 +117,7 @@ export async function PUT(req: NextRequest) {
     const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
     logActivity(user.id, 'profile_update', 'User updated profile', ip);
 
-    const { data: { user: updatedUser } } = await getSupabaseAdmin().auth.getUser(token);
+    const { data: { user: updatedUser } } = await getUserByToken(token);
     const meta = updatedUser?.user_metadata || {};
     const profile = getProfile(user.id);
 

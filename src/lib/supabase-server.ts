@@ -1,22 +1,29 @@
-import { createServerClient as createServer } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import type { Database } from '@/types/supabase';
+import { verifyToken } from '@/lib/auth';
+import { queryOne } from '@/lib/db-pool';
+import type { AuthUser } from '@/lib/supabase';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-export async function createServerClient(): Promise<ReturnType<typeof createServer<Database>>> {
+export async function createServerClient(): Promise<{
+  auth: { getUser: () => Promise<{ data: { user: AuthUser | null }; error: Error | null }> };
+}> {
   const cookieStore = await cookies();
-  return createServer<Database>(supabaseUrl, supabaseAnonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) =>
-          cookieStore.set(name, value, options)
+  const token = cookieStore.get('leguard_token')?.value;
+
+  return {
+    auth: {
+      getUser: async () => {
+        if (!token) return { data: { user: null }, error: new Error('No token') };
+        const payload = verifyToken(token);
+        if (!payload) return { data: { user: null }, error: new Error('Invalid token') };
+
+        const user = await queryOne<AuthUser>(
+          'SELECT id, email, full_name, avatar_url, theme FROM public.users WHERE id = $1',
+          [payload.id]
         );
+        if (!user) return { data: { user: null }, error: new Error('User not found') };
+
+        return { data: { user }, error: null };
       },
     },
-  });
+  };
 }

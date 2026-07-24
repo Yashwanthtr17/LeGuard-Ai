@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { queryOne } from '@/lib/db-pool';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,15 +9,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: true, message: 'Authentication required.' }, { status: 401 });
     }
 
-    const { count, error } = await getSupabaseAdmin()
-      .from('notifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .eq('is_read', false);
+    const result = await queryOne<{ count: string }>('SELECT COUNT(*) as count FROM public.notifications WHERE user_id = $1 AND is_read = FALSE', [user.id]);
 
-    if (error) throw error;
-
-    return NextResponse.json({ count: count || 0 });
+    return NextResponse.json({ count: parseInt(result?.count || '0', 10) });
   } catch (err) {
     console.error('[notifications:unread] Error:', err);
     return NextResponse.json({ error: true, message: 'Failed to fetch unread count.' }, { status: 500 });

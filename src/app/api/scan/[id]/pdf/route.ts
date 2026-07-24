@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest, getSupabaseAdmin } from '@/lib/supabase';
+import { getUserFromRequest } from '@/lib/supabase';
+import { queryOne } from '@/lib/db-pool';
 import { getAnalysis } from '@/lib/services/database';
 
 export async function GET(
@@ -14,15 +15,12 @@ export async function GET(
 
     const { id } = await params;
 
-    const admin = getSupabaseAdmin();
-    const { data: report, error: reportError } = await admin
-      .from('reports')
-      .select('*')
-      .eq('id', id)
-      .is('deleted_at', null)
-      .single();
+    const report = await queryOne<Record<string, unknown>>(
+      'SELECT * FROM public.reports WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
 
-    if (reportError || !report) {
+    if (!report) {
       return NextResponse.json({ error: true, message: 'Report not found.' }, { status: 404 });
     }
 
@@ -30,7 +28,7 @@ export async function GET(
       return NextResponse.json({ error: true, message: 'Unauthorized.' }, { status: 403 });
     }
 
-    const analysis = await getAnalysis(report.analysis_id);
+    const analysis = await getAnalysis(report.analysis_id as string);
     if (!analysis) {
       return NextResponse.json({ error: true, message: 'Analysis not found.' }, { status: 404 });
     }
