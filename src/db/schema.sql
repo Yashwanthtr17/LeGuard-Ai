@@ -1,6 +1,10 @@
+-- Legacy bootstrap schema. The canonical source is migrations/001_init.sql.
+-- Prefer: npm run db:migrate
+
 -- LeGuard-AI Database Schema (Standalone Postgres - no Supabase dependency)
 -- Run this directly on your Postgres instance
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
@@ -16,6 +20,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   risk_sensitivity TEXT DEFAULT 'standard' CHECK (risk_sensitivity IN ('standard', 'strict', 'lenient')),
   language TEXT DEFAULT 'en',
   theme TEXT DEFAULT 'light' CHECK (theme IN ('light', 'dark', 'system')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   onboarding_complete BOOLEAN DEFAULT FALSE,
   email_notifications BOOLEAN DEFAULT TRUE,
   marketing_emails BOOLEAN DEFAULT FALSE,
@@ -23,7 +28,15 @@ CREATE TABLE IF NOT EXISTS public.users (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_users_email ON public.users(email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_check') THEN
+    ALTER TABLE public.users ADD CONSTRAINT users_role_check CHECK (role IN ('user', 'admin'));
+  END IF;
+END
+$$;
 
 -- ============================================================
 -- PROFILES (kept for compatibility, merge with users)
@@ -36,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   risk_sensitivity TEXT DEFAULT 'standard' CHECK (risk_sensitivity IN ('standard', 'strict', 'lenient')),
   language TEXT DEFAULT 'en',
   theme TEXT DEFAULT 'light' CHECK (theme IN ('light', 'dark', 'system')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   onboarding_complete BOOLEAN DEFAULT FALSE,
   email_notifications BOOLEAN DEFAULT TRUE,
   marketing_emails BOOLEAN DEFAULT FALSE,
@@ -43,7 +57,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_profiles_id ON public.profiles USING hash(id);
+CREATE INDEX IF NOT EXISTS idx_profiles_id ON public.profiles USING hash(id);
 
 -- ============================================================
 -- SESSIONS
@@ -60,8 +74,8 @@ CREATE TABLE IF NOT EXISTS public.sessions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_sessions_user ON public.sessions(user_id);
-CREATE INDEX idx_sessions_token ON public.sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON public.sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_token ON public.sessions(token_hash);
 
 -- ============================================================
 -- TWO-FACTOR AUTH
@@ -109,9 +123,9 @@ CREATE TABLE IF NOT EXISTS public.documents (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_documents_user ON public.documents(user_id);
-CREATE INDEX idx_documents_status ON public.documents(status);
-CREATE INDEX idx_documents_created ON public.documents(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_user ON public.documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_status ON public.documents(status);
+CREATE INDEX IF NOT EXISTS idx_documents_created ON public.documents(created_at DESC);
 
 -- ============================================================
 -- ANALYSIS RESULTS
@@ -142,9 +156,9 @@ CREATE TABLE IF NOT EXISTS public.analyses (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_analyses_user ON public.analyses(user_id);
-CREATE INDEX idx_analyses_document ON public.analyses(document_id);
-CREATE INDEX idx_analyses_score ON public.analyses(overall_score);
+CREATE INDEX IF NOT EXISTS idx_analyses_user ON public.analyses(user_id);
+CREATE INDEX IF NOT EXISTS idx_analyses_document ON public.analyses(document_id);
+CREATE INDEX IF NOT EXISTS idx_analyses_score ON public.analyses(overall_score);
 
 -- ============================================================
 -- REPORTS
@@ -167,10 +181,10 @@ CREATE TABLE IF NOT EXISTS public.reports (
   generated_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_reports_user ON public.reports(user_id);
-CREATE INDEX idx_reports_favorite ON public.reports(user_id, is_favorite);
-CREATE INDEX idx_reports_deleted ON public.reports(deleted_at);
-CREATE INDEX idx_reports_created ON public.reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_user ON public.reports(user_id);
+CREATE INDEX IF NOT EXISTS idx_reports_favorite ON public.reports(user_id, is_favorite);
+CREATE INDEX IF NOT EXISTS idx_reports_deleted ON public.reports(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_reports_created ON public.reports(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_generation ON public.reports(generation_status);
 
 -- ============================================================
@@ -190,8 +204,8 @@ CREATE TABLE IF NOT EXISTS public.clauses (
   sort_order INTEGER DEFAULT 0
 );
 
-CREATE INDEX idx_clauses_analysis ON public.clauses(analysis_id);
-CREATE INDEX idx_clauses_type ON public.clauses(type);
+CREATE INDEX IF NOT EXISTS idx_clauses_analysis ON public.clauses(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_clauses_type ON public.clauses(type);
 
 -- ============================================================
 -- COUNTRY COMPLIANCE
@@ -204,7 +218,7 @@ CREATE TABLE IF NOT EXISTS public.country_compliance (
   note TEXT
 );
 
-CREATE INDEX idx_compliance_analysis ON public.country_compliance(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_analysis ON public.country_compliance(analysis_id);
 
 -- ============================================================
 -- RISK ITEMS
@@ -222,8 +236,8 @@ CREATE TABLE IF NOT EXISTS public.risk_items (
   sort_order INTEGER DEFAULT 0
 );
 
-CREATE INDEX idx_risk_items_analysis ON public.risk_items(analysis_id);
-CREATE INDEX idx_risk_items_category ON public.risk_items(category);
+CREATE INDEX IF NOT EXISTS idx_risk_items_analysis ON public.risk_items(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_risk_items_category ON public.risk_items(category);
 
 -- ============================================================
 -- TIMELINE EVENTS
@@ -236,7 +250,7 @@ CREATE TABLE IF NOT EXISTS public.timeline_events (
   sort_order INTEGER DEFAULT 0
 );
 
-CREATE INDEX idx_timeline_analysis ON public.timeline_events(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_timeline_analysis ON public.timeline_events(analysis_id);
 
 -- ============================================================
 -- OBLIGATIONS
@@ -249,7 +263,7 @@ CREATE TABLE IF NOT EXISTS public.obligations (
   sort_order INTEGER DEFAULT 0
 );
 
-CREATE INDEX idx_obligations_analysis ON public.obligations(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_obligations_analysis ON public.obligations(analysis_id);
 
 -- ============================================================
 -- SUBSCRIPTIONS
@@ -268,8 +282,8 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_subscriptions_user ON public.subscriptions(user_id);
-CREATE INDEX idx_subscriptions_status ON public.subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON public.subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON public.subscriptions(status);
 
 -- ============================================================
 -- PAYMENTS
@@ -287,8 +301,8 @@ CREATE TABLE IF NOT EXISTS public.payments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_payments_user ON public.payments(user_id);
-CREATE INDEX idx_payments_created ON public.payments(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payments_user ON public.payments(user_id);
+CREATE INDEX IF NOT EXISTS idx_payments_created ON public.payments(created_at DESC);
 
 -- ============================================================
 -- NOTIFICATIONS
@@ -309,8 +323,8 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_notifications_user ON public.notifications(user_id, is_read);
-CREATE INDEX idx_notifications_created ON public.notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON public.notifications(user_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON public.notifications(created_at DESC);
 
 -- ============================================================
 -- ACTIVITY LOGS
@@ -327,9 +341,9 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_activity_user ON public.activity_logs(user_id);
-CREATE INDEX idx_activity_action ON public.activity_logs(action);
-CREATE INDEX idx_activity_created ON public.activity_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_user ON public.activity_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_action ON public.activity_logs(action);
+CREATE INDEX IF NOT EXISTS idx_activity_created ON public.activity_logs(created_at DESC);
 
 -- ============================================================
 -- AI USAGE LOGS
@@ -348,9 +362,9 @@ CREATE TABLE IF NOT EXISTS public.ai_usage_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_ai_usage_user ON public.ai_usage_logs(user_id);
-CREATE INDEX idx_ai_usage_created ON public.ai_usage_logs(created_at DESC);
-CREATE INDEX idx_ai_usage_provider ON public.ai_usage_logs(provider);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON public.ai_usage_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON public.ai_usage_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_provider ON public.ai_usage_logs(provider);
 
 -- ============================================================
 -- REPORT SHARES
@@ -384,7 +398,7 @@ CREATE TABLE IF NOT EXISTS public.country_laws (
   UNIQUE(country, category, law_name)
 );
 
-CREATE INDEX idx_country_laws_country ON public.country_laws(country);
+CREATE INDEX IF NOT EXISTS idx_country_laws_country ON public.country_laws(country);
 
 -- ============================================================
 -- SUPPORT TICKETS
@@ -401,8 +415,8 @@ CREATE TABLE IF NOT EXISTS public.support_tickets (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_tickets_user ON public.support_tickets(user_id);
-CREATE INDEX idx_tickets_status ON public.support_tickets(status);
+CREATE INDEX IF NOT EXISTS idx_tickets_user ON public.support_tickets(user_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_status ON public.support_tickets(status);
 
 -- ============================================================
 -- FEEDBACK

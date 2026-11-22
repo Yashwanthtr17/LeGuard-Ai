@@ -1,9 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import { writeFile, unlink, mkdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { getUploadDir } from '@/lib/env';
 
-const UPLOADS_DIR = join(process.cwd(), '.uploads');
+const UPLOADS_DIR = isAbsolute(getUploadDir())
+  ? getUploadDir()
+  : join(/* turbopackIgnore: true */ process.cwd(), getUploadDir());
 const DOCUMENTS_DIR = join(UPLOADS_DIR, 'documents');
 const REPORTS_DIR = join(UPLOADS_DIR, 'reports');
 
@@ -34,7 +37,9 @@ export async function uploadDocument(
 
   await ensureDir(join(DOCUMENTS_DIR, userId));
 
-  const buffer = file instanceof Buffer ? file : Buffer.from(await file.arrayBuffer());
+  const buffer = Buffer.isBuffer(file)
+    ? file
+    : Buffer.from(await (file as File).arrayBuffer());
   await writeFile(fullPath, buffer);
 
   return relativePath;

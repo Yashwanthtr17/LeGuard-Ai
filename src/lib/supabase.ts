@@ -1,13 +1,17 @@
 import { NextRequest } from 'next/server';
 import { verifyToken, generateToken, hashPassword, comparePassword, generateId } from '@/lib/auth';
-import { query, queryOne, execute } from '@/lib/db-pool';
+import { queryOne, execute } from '@/lib/db-pool';
 
 export interface AuthUser {
   id: string;
   email: string;
   full_name: string;
-  avatar_url?: string;
-  theme?: string;
+  avatar_url: string | null;
+  default_country: string | null;
+  risk_sensitivity: string | null;
+  theme: string | null;
+  onboarding_complete: boolean | null;
+  created_at: string;
 }
 
 // ─── Auth Helpers ────────────────────────────────────────────────────────────
@@ -19,16 +23,30 @@ export async function getUserFromRequest(req: NextRequest): Promise<AuthUser | n
   const payload = verifyToken(token);
   if (!payload) return null;
 
-  const user = await queryOne<AuthUser & { theme: string | null; avatar_url: string | null }>(
-    'SELECT id, email, full_name, avatar_url, theme FROM public.users WHERE id = $1',
+  const user = await queryOne<AuthUser>(
+    `SELECT id, email, full_name, avatar_url, default_country, risk_sensitivity,
+            theme, onboarding_complete, created_at
+     FROM public.users WHERE id = $1`,
     [payload.id]
   );
   return user;
 }
 
 export async function signInWithPassword(email: string, password: string) {
-  const user = await queryOne<{ id: string; email: string; password_hash: string; full_name: string }>(
-    'SELECT id, email, password_hash, full_name FROM public.users WHERE email = $1',
+  const user = await queryOne<{
+    id: string;
+    email: string;
+    password_hash: string;
+    full_name: string;
+    avatar_url: string | null;
+    default_country: string | null;
+    risk_sensitivity: string | null;
+    theme: string | null;
+    onboarding_complete: boolean | null;
+  }>(
+    `SELECT id, email, password_hash, full_name, avatar_url, default_country,
+            risk_sensitivity, theme, onboarding_complete
+     FROM public.users WHERE email = $1`,
     [email.toLowerCase()]
   );
   if (!user) return { data: null, error: { message: 'Invalid email or password.' } };
@@ -40,7 +58,18 @@ export async function signInWithPassword(email: string, password: string) {
   return {
     data: {
       session: { access_token: token, refresh_token: token },
-      user: { id: user.id, email: user.email, user_metadata: {} },
+      user: {
+        id: user.id,
+        email: user.email,
+        user_metadata: {
+          full_name: user.full_name || '',
+          avatar_url: user.avatar_url || '',
+          default_country: user.default_country || 'United States',
+          risk_sensitivity: user.risk_sensitivity || 'standard',
+          theme: user.theme || 'system',
+          onboarding_complete: !!user.onboarding_complete,
+        },
+      },
     },
     error: null,
   };
@@ -85,8 +114,20 @@ export async function getUserByToken(token: string) {
   const payload = verifyToken(token);
   if (!payload) return { data: { user: null }, error: { message: 'Invalid token' } };
 
-  const user = await queryOne<{ id: string; email: string; created_at: string; full_name: string }>(
-    'SELECT id, email, full_name, created_at FROM public.users WHERE id = $1',
+  const user = await queryOne<{
+    id: string;
+    email: string;
+    created_at: string;
+    full_name: string;
+    avatar_url: string | null;
+    default_country: string | null;
+    risk_sensitivity: string | null;
+    theme: string | null;
+    onboarding_complete: boolean | null;
+  }>(
+    `SELECT id, email, full_name, created_at, avatar_url, default_country,
+            risk_sensitivity, theme, onboarding_complete
+     FROM public.users WHERE id = $1`,
     [payload.id]
   );
   if (!user) return { data: { user: null }, error: { message: 'User not found' } };
@@ -96,7 +137,14 @@ export async function getUserByToken(token: string) {
       user: {
         id: user.id,
         email: user.email,
-        user_metadata: { full_name: user.full_name },
+        user_metadata: {
+          full_name: user.full_name,
+          avatar_url: user.avatar_url,
+          default_country: user.default_country,
+          risk_sensitivity: user.risk_sensitivity,
+          theme: user.theme,
+          onboarding_complete: user.onboarding_complete,
+        },
         created_at: user.created_at,
       },
     },

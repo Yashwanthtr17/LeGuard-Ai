@@ -161,11 +161,3 @@ export function useUpdateProfile() {
     },
   });
 }
-
-export function useOAuthSignIn() {
-  return useMutation<void, Error, string>({
-    mutationFn: async (_provider: string) => {
-      throw new Error('OAuth sign-in is not available.');
-    },
-  });
-}

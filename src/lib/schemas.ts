@@ -6,15 +6,6 @@ export const loginSchema = z.object({
   remember_me: z.boolean().optional().default(false),
 });
 
-export const oauthSchema = z.object({
-  provider: z.enum(['google', 'github', 'azure']),
-});
-
-export const callbackSchema = z.object({
-  code: z.string().min(1),
-  redirect_to: z.string().optional(),
-});
-
 export const registerSchema = z.object({
   full_name: z.string().min(1, 'Full name is required'),
   email: z.string().email('Invalid email format'),

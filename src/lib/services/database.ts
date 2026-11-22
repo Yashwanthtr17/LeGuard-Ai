@@ -351,12 +351,23 @@ export async function logActivity(
   action: string,
   resource?: string,
   resourceId?: string,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
+  ipAddress?: string,
+  userAgent?: string
 ): Promise<void> {
   await execute(
-    `INSERT INTO public.activity_logs (user_id, action, resource, resource_id, details)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [userId, action, resource || null, resourceId || null, details ? JSON.stringify(details) : null]
+    `INSERT INTO public.activity_logs
+       (user_id, action, resource, resource_id, details, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      userId,
+      action,
+      resource || null,
+      resourceId || null,
+      details ? JSON.stringify(details) : null,
+      ipAddress || null,
+      userAgent || null,
+    ]
   );
 }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/supabase';
-import { query, queryOne, execute } from '@/lib/db-pool';
+import { queryOne, execute } from '@/lib/db-pool';
 import {
   createAnalysis,
   getUserReports,

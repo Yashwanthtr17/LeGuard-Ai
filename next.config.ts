@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  poweredByHeader: false,
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas", "puppeteer"],
   async headers() {
     return [
       {

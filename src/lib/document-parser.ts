@@ -16,13 +16,18 @@ export async function parseDocument(
 
   switch (extension) {
     case 'pdf': {
-      const data = await PDFParse(buffer);
-      return {
-        text: data.text,
-        pages: data.numpages || 1,
-        fileName,
-        fileType: 'pdf',
-      };
+      const parser = new PDFParse({ data: buffer });
+      try {
+        const data = await parser.getText();
+        return {
+          text: data.text,
+          pages: data.total || 1,
+          fileName,
+          fileType: 'pdf',
+        };
+      } finally {
+        await parser.destroy();
+      }
     }
     case 'docx': {
       const result = await extractRawText({ buffer });

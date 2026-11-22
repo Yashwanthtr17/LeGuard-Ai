@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import { getJwtSecret } from '@/lib/env';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'leguard-ai-secret-key-change-in-production';
 const SALT_ROUNDS = 12;
 
 export interface UserPayload {
@@ -20,14 +20,14 @@ export function comparePassword(password: string, hash: string): Promise<boolean
 }
 
 export function generateToken(user: UserPayload, rememberMe = false): string {
-  return jwt.sign(user, JWT_SECRET, {
+  return jwt.sign(user, getJwtSecret(), {
     expiresIn: rememberMe ? '30d' : '7d',
   });
 }
 
 export function verifyToken(token: string): UserPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as UserPayload;
+    return jwt.verify(token, getJwtSecret()) as UserPayload;
   } catch {
     return null;
   }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest, signInWithPassword } from '@/lib/supabase';
 import { getBackupCodes, updateBackupCodes } from '@/lib/services/database';
-import { logActivity } from '@/lib/db';
+import { recordActivity } from '@/lib/services/activity';
 
 function generateBackupCodes(): string[] {
   const codes: string[] = [];
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
 
     const backupCodes = generateBackupCodes();
     await updateBackupCodes(user.id, backupCodes);
-    await logActivity(user.id, '2fa_codes_regenerated', '2FA backup codes regenerated');
+    await recordActivity(user.id, '2fa_codes_regenerated', '2FA backup codes regenerated');
 
     return NextResponse.json({ backupCodes });
   } catch (err) {

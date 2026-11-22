@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest, signInWithPassword } from '@/lib/supabase';
 import { disableTwoFactor } from '@/lib/services/database';
-import { logActivity } from '@/lib/db';
+import { recordActivity } from '@/lib/services/activity';
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     }
 
     await disableTwoFactor(user.id);
-    await logActivity(user.id, '2fa_disabled', 'Two-factor authentication disabled');
+    await recordActivity(user.id, '2fa_disabled', 'Two-factor authentication disabled');
 
     return NextResponse.json({ success: true });
   } catch (err) {

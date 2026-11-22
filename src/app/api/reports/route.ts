@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     const limit = 10;
     const offset = (page - 1) * limit;
 
-    let conditions = ['r.user_id = $1', 'r.deleted_at IS NULL'];
+    const conditions = ['r.user_id = $1', 'r.deleted_at IS NULL'];
     const params: unknown[] = [user.id];
     let paramIdx = 2;
 

@@ -1,14 +1,22 @@
 import { Pool, QueryResultRow } from 'pg';
+import { getDatabaseUrl } from '@/lib/env';
 
 let pool: Pool | null = null;
 
 export function getPool(): Pool {
   if (!pool) {
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) {
-      throw new Error('DATABASE_URL environment variable is not set');
-    }
-    pool = new Pool({ connectionString });
+    pool = new Pool({
+      connectionString: getDatabaseUrl(),
+      max: 10,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+    });
+
+    // Idle clients emit errors when PostgreSQL restarts or the network drops.
+    // Without a listener these become uncaught exceptions and kill the process.
+    pool.on('error', (error) => {
+      console.error('[db-pool] Idle client error:', error.message);
+    });
   }
   return pool;
 }

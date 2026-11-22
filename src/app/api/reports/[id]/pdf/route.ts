@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/supabase';
 import { queryOne } from '@/lib/db-pool';
 import { getReport, logActivity } from '@/lib/services/database';
-import { getReportPdfUrl, getReportPdfBuffer } from '@/lib/services/storage';
+import { getReportPdfUrl } from '@/lib/services/storage';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

@@ -1,29 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const token = searchParams.get("token");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [checking, setChecking] = useState(true);
-  const [token, setToken] = useState<string | null>(null);
-
-  useEffect(() => {
-    const t = searchParams.get("token");
-    if (t) {
-      setToken(t);
-      setReady(true);
-    }
-    setChecking(false);
-  }, [searchParams]);
-
-  const [ready, setReady] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -71,12 +59,7 @@ export default function ResetPasswordPage() {
           <h1 className="text-2xl font-bold text-slate-900 mb-1">Reset your password</h1>
           <p className="text-slate-500 text-sm mb-6">Enter your new password below.</p>
 
-          {checking ? (
-            <div className="text-center py-8">
-              <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4" />
-              <p className="text-slate-500">Verifying your reset link...</p>
-            </div>
-          ) : !token ? (
+          {!token ? (
             <div className="text-center py-8">
               <p className="text-danger text-sm mb-4">Invalid or expired reset link.</p>
               <button
@@ -134,5 +117,22 @@ export default function ResetPasswordPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-white to-background px-4">
+          <div className="text-center py-8">
+            <div className="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-slate-500">Loading reset form...</p>
+          </div>
+        </div>
+      }
+    >
+      <ResetPasswordForm />
+    </Suspense>
   );
 }

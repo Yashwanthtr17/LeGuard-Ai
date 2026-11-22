@@ -15,8 +15,15 @@ export async function GET(
 
     const { id } = await params;
 
-    const report = await queryOne<Record<string, unknown>>(
-      'SELECT * FROM public.reports WHERE id = $1 AND deleted_at IS NULL',
+    const report = await queryOne<{
+      id: string;
+      user_id: string;
+      analysis_id: string;
+      title: string;
+      created_at: string;
+    }>(
+      `SELECT id, user_id, analysis_id, title, created_at
+       FROM public.reports WHERE id = $1 AND deleted_at IS NULL`,
       [id]
     );
 
@@ -28,7 +35,7 @@ export async function GET(
       return NextResponse.json({ error: true, message: 'Unauthorized.' }, { status: 403 });
     }
 
-    const analysis = await getAnalysis(report.analysis_id as string);
+    const analysis = await getAnalysis(report.analysis_id);
     if (!analysis) {
       return NextResponse.json({ error: true, message: 'Analysis not found.' }, { status: 404 });
     }

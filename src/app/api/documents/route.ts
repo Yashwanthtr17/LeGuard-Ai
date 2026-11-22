@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     const document = await queryOne<{ id: string }>(
       `INSERT INTO public.documents (user_id, original_name, file_type, file_size, storage_path, mime_type, status, page_count)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [user.id, file.name, metadata.data.document_type, file.size, storagePath, file.type || null, 'uploaded', 0]
+      [user.id, file.name, metadata.data.document_type, file.size, storagePath, file.type || null, 'pending', 0]
     );
 
     if (!document) throw new Error('Failed to create document.');
