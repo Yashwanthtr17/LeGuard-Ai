@@ -186,3 +186,4 @@ node .next/standalone/server.js
 Implemented: bcrypt password hashing, Zod request validation, TOTP 2FA with replay-protected challenges, security headers, file type/size validation, and parameterized SQL.
 
 Still being hardened in the next phase: revocable server-side sessions, admin role enforcement, authorization on stored files, password-reset delivery, CSRF/rate-limit coverage, upload cleanup, and subscription authorization. Do not expose this build publicly until that work is complete.
+--> done
